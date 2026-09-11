@@ -1,0 +1,54 @@
+[package]
+name = "ecg-studio"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+base64 = "0.22"
+fontdb = "0.23"
+image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png"] }
+rfd = "0.15"
+roxmltree = "0.20"
+slint = "1"
+ttf-parser = "0.25"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Devices_Communication",
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Printing",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_Xps",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Controls_Dialogs",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.5.2"
+objc2-app-kit = { version = "=0.2.2", default-features = false, features = [
+    "NSApplication",
+    "NSResponder",
+] }
+objc2-foundation = { version = "=0.2.2", default-features = false, features = [
+    "NSArray",
+    "NSObject",
+    "NSString",
+    "NSURL",
+] }
+
+[build-dependencies]
+slint-build = "1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

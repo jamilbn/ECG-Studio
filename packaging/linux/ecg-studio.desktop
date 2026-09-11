@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ECG Studio
+Comment=Open and preview ECG files
+Exec=ecg-studio %f
+Icon=ecg-studio
+Terminal=false
+Categories=Science;MedicalSoftware;
+MimeType=application/dicom;application/vnd.ecgstudio.ecg;application/xml;text/xml;

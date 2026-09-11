@@ -1,0 +1,740 @@
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Palette } from "std-widgets.slint";
+
+export component AboutWindow inherits Window {
+    in property <string> about-title: "Sobre ECG Studio";
+    in property <string> version-text: "Versão 1.0";
+    in property <string> made-with-text: "Feito com:";
+
+    private property <bool> dark-theme: Palette.color-scheme == ColorScheme.dark;
+    private property <brush> window-background: root.dark-theme ? #111827 : #f8fafc;
+    private property <brush> panel-background: root.dark-theme ? #182130 : #ffffff;
+    private property <brush> border-color: root.dark-theme ? #3c495c : #d8e0e8;
+    private property <brush> primary-text: root.dark-theme ? #edf2f7 : #18212f;
+    private property <brush> secondary-text: root.dark-theme ? #b7c2d0 : #5c6675;
+
+    title: root.about-title;
+    icon: @image-url("../assets/app-icon.png");
+    min-width: 340px;
+    max-width: 340px;
+    preferred-width: 340px;
+    min-height: 220px;
+    max-height: 220px;
+    preferred-height: 220px;
+    default-font-family: "Segoe UI Variable Text";
+    default-font-size: 13px;
+    background: root.window-background;
+
+    Rectangle {
+        background: root.panel-background;
+        border-color: root.border-color;
+        border-width: 1px;
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 10px;
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                Image {
+                    source: @image-url("../assets/app-icon.png");
+                    image-fit: contain;
+                    width: 64px;
+                    height: 64px;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 2px;
+
+                    Text {
+                        text: "ECG Studio";
+                        color: root.primary-text;
+                        font-size: 25px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: root.version-text;
+                        color: root.secondary-text;
+                        font-size: 12px;
+                        horizontal-alignment: right;
+                    }
+                }
+            }
+
+            Text {
+                text: root.made-with-text;
+                color: root.secondary-text;
+                horizontal-alignment: center;
+                font-size: 13px;
+            }
+
+            HorizontalLayout {
+                spacing: 28px;
+                alignment: center;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Image {
+                        source: @image-url("../assets/rust-logo.svg");
+                        image-fit: contain;
+                        width: 42px;
+                        height: 42px;
+                    }
+                    Text {
+                        text: "Rust";
+                        color: root.primary-text;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Image {
+                        source: @image-url("../assets/slint-logo.svg");
+                        image-fit: contain;
+                        width: 42px;
+                        height: 42px;
+                    }
+                    Text {
+                        text: "Slint";
+                        color: root.primary-text;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    in property <string> settings-title: "Configurações";
+    in property <string> language-label: "Idioma";
+    in property <string> save-text: "Salvar";
+    in property <string> cancel-text: "Cancelar";
+    in-out property <string> language-value: "Windows";
+
+    callback save-settings(language: string);
+    callback cancel-settings();
+
+    private property <bool> dark-theme: Palette.color-scheme == ColorScheme.dark;
+    private property <brush> window-background: root.dark-theme ? #111827 : #f8fafc;
+    private property <brush> panel-background: root.dark-theme ? #182130 : #ffffff;
+    private property <brush> border-color: root.dark-theme ? #3c495c : #d8e0e8;
+    private property <brush> primary-text: root.dark-theme ? #edf2f7 : #18212f;
+    private property <brush> secondary-text: root.dark-theme ? #b7c2d0 : #5c6675;
+
+    title: root.settings-title;
+    icon: @image-url("../assets/app-icon.png");
+    min-width: 440px;
+    max-width: 440px;
+    preferred-width: 440px;
+    min-height: 390px;
+    max-height: 390px;
+    preferred-height: 390px;
+    default-font-family: "Segoe UI Variable Text";
+    default-font-size: 13px;
+    background: root.window-background;
+
+    Rectangle {
+        background: root.panel-background;
+        border-color: root.border-color;
+        border-width: 1px;
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 12px;
+            alignment: start;
+
+            Text {
+                text: root.settings-title;
+                color: root.primary-text;
+                font-size: 20px;
+                font-weight: 700;
+                min-height: 28px;
+                max-height: 28px;
+                preferred-height: 28px;
+            }
+
+            Text {
+                text: root.language-label;
+                color: root.secondary-text;
+                font-size: 12px;
+                min-height: 18px;
+                max-height: 18px;
+                preferred-height: 18px;
+            }
+
+            ComboBox {
+                min-height: 36px;
+                max-height: 36px;
+                preferred-height: 36px;
+                model: [
+                    "Windows",
+                    "Português (Brasil)",
+                    "Português (Portugal)",
+                    "English",
+                    "Español (Latinoamérica)",
+                    "Español (España)",
+                    "Français",
+                    "Italiano",
+                    "Deutsch",
+                ];
+                current-value <=> root.language-value;
+            }
+
+            Rectangle {
+                min-height: 184px;
+                preferred-height: 184px;
+                vertical-stretch: 1;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+                min-height: 36px;
+                max-height: 36px;
+                preferred-height: 36px;
+
+                Button {
+                    text: root.cancel-text;
+                    min-width: 86px;
+                    max-width: 86px;
+                    preferred-width: 86px;
+                    min-height: 32px;
+                    max-height: 32px;
+                    preferred-height: 32px;
+                    clicked => { root.cancel-settings(); }
+                }
+
+                Button {
+                    text: root.save-text;
+                    min-width: 86px;
+                    max-width: 86px;
+                    preferred-width: 86px;
+                    min-height: 32px;
+                    max-height: 32px;
+                    preferred-height: 32px;
+                    clicked => { root.save-settings(root.language-value); }
+                }
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in-out property <string> clinic-name: "Clínica";
+    in-out property <string> clinic-logo-name: "Sem logotipo";
+    in-out property <string> physician-name: "";
+    in-out property <string> patient-name: "";
+    in-out property <string> patient-birth-date: "";
+    in-out property <string> exam-date: "";
+    in-out property <string> filter-value: "Sem filtro";
+    in-out property <string> orientation-value: "Paisagem";
+    in-out property <string> grid-theme-value: "Salmão Claro";
+    in-out property <string> export-format-value: "DICOM-ECG";
+    in-out property <string> live-device-value: "CONTEC 8000G";
+    in-out property <float> zoom-scale: 1.0;
+    in-out property <bool> fit-preview: true;
+    in-out property <bool> show-calibration: true;
+    in-out property <bool> lead-i-selected: true;
+    in-out property <bool> lead-ii-selected: true;
+    in-out property <bool> lead-iii-selected: true;
+    in-out property <bool> lead-avr-selected: true;
+    in-out property <bool> lead-avl-selected: true;
+    in-out property <bool> lead-avf-selected: true;
+    in-out property <bool> lead-v1-selected: true;
+    in-out property <bool> lead-v2-selected: true;
+    in-out property <bool> lead-v3-selected: true;
+    in-out property <bool> lead-v4-selected: true;
+    in-out property <bool> lead-v5-selected: true;
+    in-out property <bool> lead-v6-selected: true;
+    in-out property <bool> live-running: false;
+    in-out property <bool> live-recording: false;
+    in property <string> live-sample-text: "0 amostras";
+    in property <string> recorded-sample-text: "0 amostras gravadas";
+    in property <string> file-name: "Nenhum arquivo carregado";
+    in property <string> status-text: "Abra um ECG para visualizar a página.";
+    in property <image> preview-image;
+    in property <string> text-live-capture: "Captura ao vivo";
+    in property <string> text-device: "Aparelho";
+    in property <string> text-recording: "Gravando";
+    in property <string> text-record: "Gravar";
+    in property <string> text-capturing: "Capturando";
+    in property <string> text-start-live: "Iniciar live";
+    in property <string> text-stop: "Parar";
+    in property <string> text-header: "Cabeçalho";
+    in property <string> text-clinic: "Clínica";
+    in property <string> text-physician: "Médico";
+    in property <string> text-physician-placeholder: "Nome do médico";
+    in property <string> text-logo: "Logotipo";
+    in property <string> text-choose: "Escolher";
+    in property <string> text-remove: "Remover";
+    in property <string> text-patient: "Paciente";
+    in property <string> text-patient-placeholder: "Nome do paciente";
+    in property <string> text-birth-date: "Data de nascimento";
+    in property <string> text-birth-date-placeholder: "dd/mm/aaaa";
+    in property <string> text-exam-date: "Data do exame";
+    in property <string> text-exam-date-placeholder: "dd/mm/aaaa hh:mm";
+    in property <string> text-view: "Visualização";
+    in property <string> text-filter: "Filtro";
+    in property <string> text-orientation: "Orientação";
+    in property <string> text-grid: "Grade";
+    in property <string> text-printed-leads: "Canais impressos";
+    in property <string> text-calibration-pulse: "Pulso de calibração";
+    in property <string> text-save-label: "Salvar";
+    in property <string> text-open: "Abrir";
+    in property <string> text-save: "Salvar";
+    in property <string> text-print: "Imprimir";
+    in property <string> text-about: "Sobre";
+    in property <string> text-settings: "Configurações";
+    in property <string> filter-none-text: "Sem filtro";
+    in property <string> filter-baseline-text: "Remover linha de base";
+    in property <string> filter-low-pass-text: "Baixa passagem 40 Hz";
+    in property <string> filter-diagnostic-text: "Diagnóstico";
+    in property <string> filter-monitor-text: "Monitor";
+    in property <string> orientation-landscape-text: "Paisagem";
+    in property <string> orientation-portrait-text: "Retrato";
+    in property <string> grid-light-salmon-text: "Salmão Claro";
+    in property <string> grid-technical-gray-text: "Cinza Técnico";
+
+    private property <bool> dark-theme: Palette.color-scheme == ColorScheme.dark;
+    private property <length> source-page-width: root.orientation-value == root.orientation-portrait-text ? 1131px : 1600px;
+    private property <length> source-page-height: root.orientation-value == root.orientation-portrait-text ? 1600px : 1131px;
+
+    private property <brush> app-background: root.dark-theme ? #111827 : #eef2f5;
+    private property <brush> side-background: root.dark-theme ? #182130 : #f8fafc;
+    private property <brush> workspace-background: root.dark-theme ? #0f1622 : #dfe6ed;
+    private property <brush> preview-frame-background: root.dark-theme ? #151c28 : #ffffff;
+    private property <brush> divider-color: root.dark-theme ? #344153 : #dbe1e8;
+    private property <brush> border-color: root.dark-theme ? #3c495c : #c8d1dc;
+    private property <brush> primary-text: root.dark-theme ? #edf2f7 : #18212f;
+    private property <brush> secondary-text: root.dark-theme ? #b7c2d0 : #5c6675;
+    private property <brush> section-text: root.dark-theme ? #e6edf5 : #263241;
+    private property <brush> status-background: root.dark-theme ? #202b3a : #e7edf3;
+    private property <brush> status-text-color: root.dark-theme ? #d7e2ef : #2e3a49;
+    private property <bool> record-blink-on: false;
+
+    callback open-file();
+    callback choose-logo();
+    callback clear-logo();
+    callback preview-inputs-changed();
+    callback export-ecg();
+    callback print-ecg();
+    callback start-live();
+    callback start-recording();
+    callback stop-live();
+    callback show-about();
+    callback show-settings();
+    callback format-birth-date(value: string);
+
+    changed clinic-name => { root.preview-inputs-changed(); }
+    changed physician-name => { root.preview-inputs-changed(); }
+    changed patient-name => { root.preview-inputs-changed(); }
+    changed patient-birth-date => { root.preview-inputs-changed(); }
+    changed exam-date => { root.preview-inputs-changed(); }
+    changed filter-value => { root.preview-inputs-changed(); }
+    changed orientation-value => { root.preview-inputs-changed(); }
+    changed grid-theme-value => { root.preview-inputs-changed(); }
+    changed show-calibration => { root.preview-inputs-changed(); }
+    changed lead-i-selected => { root.preview-inputs-changed(); }
+    changed lead-ii-selected => { root.preview-inputs-changed(); }
+    changed lead-iii-selected => { root.preview-inputs-changed(); }
+    changed lead-avr-selected => { root.preview-inputs-changed(); }
+    changed lead-avl-selected => { root.preview-inputs-changed(); }
+    changed lead-avf-selected => { root.preview-inputs-changed(); }
+    changed lead-v1-selected => { root.preview-inputs-changed(); }
+    changed lead-v2-selected => { root.preview-inputs-changed(); }
+    changed lead-v3-selected => { root.preview-inputs-changed(); }
+    changed lead-v4-selected => { root.preview-inputs-changed(); }
+    changed lead-v5-selected => { root.preview-inputs-changed(); }
+    changed lead-v6-selected => { root.preview-inputs-changed(); }
+    changed live-recording => { root.record-blink-on = root.live-recording; }
+
+    Timer {
+        interval: 500ms;
+        running: root.live-recording;
+        triggered => { root.record-blink-on = !root.record-blink-on; }
+    }
+
+    title: "ECG Studio";
+    icon: @image-url("../assets/app-icon.png");
+    preferred-width: 1200px;
+    preferred-height: 780px;
+    default-font-family: "Segoe UI Variable Text";
+    default-font-size: 13px;
+    background: root.app-background;
+
+    function zoom-by-wheel(delta: length) {
+        if root.fit-preview {
+            root.zoom-scale = max(0.45, min(3.0, root.fitted-width / root.source-page-width));
+            root.fit-preview = false;
+        }
+        if delta > 0px {
+            root.zoom-scale = min(3.0, root.zoom-scale * 1.1);
+        } else if delta < 0px {
+            root.zoom-scale = max(0.45, root.zoom-scale / 1.1);
+        }
+    }
+
+    private property <length> fitted-width: root.source-page-width <= 0px || root.source-page-height <= 0px
+        ? 1px
+        : min(preview-scroll.visible-width, preview-scroll.visible-height * root.source-page-width / root.source-page-height);
+    private property <length> fitted-height: root.source-page-width <= 0px || root.source-page-height <= 0px
+        ? 1px
+        : min(preview-scroll.visible-height, preview-scroll.visible-width * root.source-page-height / root.source-page-width);
+    private property <length> page-width: root.fit-preview ? max(1px, root.fitted-width) : root.source-page-width * root.zoom-scale;
+    private property <length> page-height: root.fit-preview ? max(1px, root.fitted-height) : root.source-page-height * root.zoom-scale;
+
+    HorizontalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            width: 330px;
+            background: root.side-background;
+            border-color: root.border-color;
+            border-width: 1px;
+
+            ScrollView {
+                width: parent.width;
+                height: parent.height;
+                viewport-width: parent.width;
+                mouse-drag-pan-enabled: true;
+
+                VerticalLayout {
+                    width: parent.width;
+                    padding: 14px;
+                    spacing: 10px;
+
+                Text {
+                    text: "ECG Studio";
+                    font-size: 23px;
+                    font-weight: 600;
+                    color: root.primary-text;
+                }
+
+                Text {
+                    text: root.file-name;
+                    font-size: 12px;
+                    color: root.secondary-text;
+                    wrap: word-wrap;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: root.divider-color;
+                }
+
+                Text { text: root.text-live-capture; font-weight: 700; color: root.section-text; }
+
+                Text { text: root.text-device; color: root.secondary-text; font-size: 12px; }
+                ComboBox {
+                    model: ["CONTEC 8000G", "CONTEC ECG90A"];
+                    current-value <=> root.live-device-value;
+                    enabled: !root.live-running;
+                }
+
+                Text {
+                    text: root.live-recording
+                        ? root.text-recording + " - " + root.recorded-sample-text
+                        : root.live-running
+                            ? root.text-capturing + " - " + root.live-sample-text
+                            : root.live-sample-text;
+                    color: root.secondary-text;
+                    font-size: 12px;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: root.text-start-live;
+                        enabled: !root.live-running;
+                        clicked => { root.start-live(); }
+                    }
+                    Rectangle {
+                        min-width: 88px;
+                        min-height: 30px;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: root.live-recording
+                            ? #f87171
+                            : root.live-running
+                                ? root.border-color
+                                : root.divider-color;
+                        background: root.live-recording
+                            ? root.record-blink-on ? #ef4444 : #991b1b
+                            : root.live-running
+                                ? record-touch.pressed
+                                    ? (root.dark-theme ? #303d51 : #d8e0e8)
+                                    : record-touch.has-hover
+                                        ? (root.dark-theme ? #293548 : #edf3f8)
+                                        : (root.dark-theme ? #202b3a : #f8fafc)
+                                : root.status-background;
+
+                        Text {
+                            text: root.live-recording ? root.text-recording : root.text-record;
+                            color: root.live-recording
+                                ? #ffffff
+                                : root.live-running
+                                    ? root.primary-text
+                                    : root.secondary-text;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-weight: root.live-recording ? 700 : 400;
+                        }
+
+                        record-touch := TouchArea {
+                            enabled: root.live-running && !root.live-recording;
+                            clicked => {
+                                if root.live-running && !root.live-recording {
+                                    root.start-recording();
+                                }
+                            }
+                        }
+                    }
+                    Button {
+                        text: root.text-stop;
+                        enabled: root.live-running;
+                        clicked => { root.stop-live(); }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: root.divider-color;
+                }
+
+                Text { text: root.text-header; font-weight: 700; color: root.section-text; }
+
+                Text { text: root.text-clinic; color: root.secondary-text; font-size: 12px; }
+                LineEdit { text <=> root.clinic-name; placeholder-text: root.text-clinic; }
+
+                Text { text: root.text-physician; color: root.secondary-text; font-size: 12px; }
+                LineEdit { text <=> root.physician-name; placeholder-text: root.text-physician-placeholder; }
+
+                Text { text: root.text-logo; color: root.secondary-text; font-size: 12px; }
+                Text {
+                    text: root.clinic-logo-name;
+                    color: root.secondary-text;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button {
+                        text: root.text-choose;
+                        clicked => { root.choose-logo(); }
+                    }
+                    Button {
+                        text: root.text-remove;
+                        clicked => { root.clear-logo(); }
+                    }
+                }
+
+                Text { text: root.text-patient; color: root.secondary-text; font-size: 12px; }
+                LineEdit { text <=> root.patient-name; placeholder-text: root.text-patient-placeholder; }
+
+                Text { text: root.text-birth-date; color: root.secondary-text; font-size: 12px; }
+                birth-date-input := LineEdit {
+                    text <=> root.patient-birth-date;
+                    placeholder-text: root.text-birth-date-placeholder;
+                    edited(value) => {
+                        root.format-birth-date(value);
+                        birth-date-input.set-selection-offsets(
+                            root.patient-birth-date.character-count,
+                            root.patient-birth-date.character-count
+                        );
+                    }
+                }
+
+                Text { text: root.text-exam-date; color: root.secondary-text; font-size: 12px; }
+                LineEdit { text <=> root.exam-date; placeholder-text: root.text-exam-date-placeholder; }
+
+                Rectangle {
+                    height: 1px;
+                    background: root.divider-color;
+                }
+
+                Text { text: root.text-view; font-weight: 700; color: root.section-text; }
+
+                Text { text: root.text-filter; color: root.secondary-text; font-size: 12px; }
+                ComboBox {
+                    model: [root.filter-none-text, root.filter-baseline-text, root.filter-low-pass-text, root.filter-diagnostic-text, root.filter-monitor-text];
+                    current-value <=> root.filter-value;
+                }
+
+                Text { text: root.text-orientation; color: root.secondary-text; font-size: 12px; }
+                ComboBox {
+                    model: [root.orientation-landscape-text, root.orientation-portrait-text];
+                    current-value <=> root.orientation-value;
+                }
+
+                Text { text: root.text-grid; color: root.secondary-text; font-size: 12px; }
+                ComboBox {
+                    model: [root.grid-light-salmon-text, root.grid-technical-gray-text];
+                    current-value <=> root.grid-theme-value;
+                }
+
+                Text { text: root.text-printed-leads; color: root.secondary-text; font-size: 12px; }
+                HorizontalLayout {
+                    spacing: 22px;
+                    VerticalLayout {
+                        spacing: 2px;
+                        CheckBox { text: "I"; checked <=> root.lead-i-selected; }
+                        CheckBox { text: "II"; checked <=> root.lead-ii-selected; }
+                        CheckBox { text: "III"; checked <=> root.lead-iii-selected; }
+                        CheckBox { text: "aVR"; checked <=> root.lead-avr-selected; }
+                        CheckBox { text: "aVL"; checked <=> root.lead-avl-selected; }
+                        CheckBox { text: "aVF"; checked <=> root.lead-avf-selected; }
+                    }
+                    VerticalLayout {
+                        spacing: 2px;
+                        CheckBox { text: "V1"; checked <=> root.lead-v1-selected; }
+                        CheckBox { text: "V2"; checked <=> root.lead-v2-selected; }
+                        CheckBox { text: "V3"; checked <=> root.lead-v3-selected; }
+                        CheckBox { text: "V4"; checked <=> root.lead-v4-selected; }
+                        CheckBox { text: "V5"; checked <=> root.lead-v5-selected; }
+                        CheckBox { text: "V6"; checked <=> root.lead-v6-selected; }
+                    }
+                }
+
+                CheckBox {
+                    text: root.text-calibration-pulse;
+                    checked <=> root.show-calibration;
+                }
+
+                Text { text: root.text-save-label; color: root.secondary-text; font-size: 12px; }
+                ComboBox {
+                    model: ["DICOM-ECG", "HL7 aECG"];
+                    current-value <=> root.export-format-value;
+                }
+                Button {
+                    text: root.text-open;
+                    clicked => { root.open-file(); }
+                }
+                Button {
+                    text: root.text-save;
+                    clicked => { root.export-ecg(); }
+                }
+                Button {
+                    text: root.text-print;
+                    clicked => { root.print-ecg(); }
+                }
+
+                Rectangle {
+                    background: root.status-background;
+                    border-radius: 8px;
+                    height: 78px;
+                    VerticalLayout {
+                        padding: 12px;
+                        Text {
+                            text: root.status-text;
+                            color: root.status-text-color;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 16px;
+                    alignment: end;
+                    min-height: 24px;
+                    preferred-height: 24px;
+
+                    Rectangle {
+                        min-width: 116px;
+                        preferred-width: 116px;
+                        min-height: 24px;
+                        preferred-height: 24px;
+
+                        Text {
+                            text: root.text-settings;
+                            color: root.secondary-text;
+                            font-size: 12px;
+                            width: parent.width;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+
+                        settings-link-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            clicked => { root.show-settings(); }
+                        }
+                    }
+
+                    Rectangle {
+                        min-width: 64px;
+                        preferred-width: 64px;
+                        min-height: 24px;
+                        preferred-height: 24px;
+
+                        Text {
+                            text: root.text-about;
+                            color: root.secondary-text;
+                            font-size: 12px;
+                            width: parent.width;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+
+                        about-link-touch := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            clicked => { root.show-about(); }
+                        }
+                    }
+                }
+            }
+        }
+        }
+
+        Rectangle {
+            background: root.workspace-background;
+            HorizontalLayout {
+                padding: 18px;
+                Rectangle {
+                    background: root.preview-frame-background;
+                    border-radius: 8px;
+                    border-color: root.border-color;
+                    border-width: 1px;
+                    clip: true;
+                    preview-scroll := ScrollView {
+                        width: parent.width;
+                        height: parent.height;
+                        viewport-width: root.page-width;
+                        viewport-height: root.page-height;
+                        mouse-drag-pan-enabled: true;
+
+                        Rectangle {
+                            width: root.page-width;
+                            height: root.page-height;
+                            background: Palette.background;
+
+                            Image {
+                                source: root.preview-image;
+                                image-fit: contain;
+                                width: parent.width;
+                                height: parent.height;
+                            }
+                            TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                scroll-event(event) => {
+                                    root.zoom-by-wheel(event.delta-y);
+                                    accept
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

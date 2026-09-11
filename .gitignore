@@ -1,0 +1,14 @@
+/target/
+/dist/
+*.exe
+*.pdb
+*.ilk
+*.obj
+.DS_Store
+Thumbs.db
+*.pcapng
+/captures/
+.idea/
+.vscode/
+*.swp
+*.swo

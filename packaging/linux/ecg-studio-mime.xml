@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/vnd.ecgstudio.ecg">
+    <comment>ECG document</comment>
+    <glob pattern="*.aecg"/>
+    <glob pattern="*.hl7"/>
+    <glob pattern="*.c8k"/>
+    <glob pattern="*.ecg"/>
+  </mime-type>
+  <mime-type type="application/dicom">
+    <comment>DICOM ECG document</comment>
+    <glob pattern="*.dcm"/>
+    <glob pattern="*.dicom"/>
+  </mime-type>
+</mime-info>
