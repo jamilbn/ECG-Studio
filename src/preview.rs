@@ -109,7 +109,6 @@ impl ClinicLogo {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(not(windows), allow(dead_code))]
 pub struct LogoBitmap {
     pub width: u32,
     pub height: u32,
@@ -124,7 +123,6 @@ pub struct RenderedPage {
 }
 
 #[derive(Clone, Debug)]
-#[cfg_attr(not(windows), allow(dead_code))]
 pub enum DrawCommand {
     FillRect {
         rect: Rect,
@@ -176,11 +174,11 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn width(self) -> f64 {
+    pub(crate) fn width(self) -> f64 {
         self.right - self.left
     }
 
-    fn height(self) -> f64 {
+    pub(crate) fn height(self) -> f64 {
         self.bottom - self.top
     }
 
@@ -1244,6 +1242,9 @@ fn load_system_text_font(weight: u16) -> Option<FontFaceData> {
     let families = [
         Family::Name("Segoe UI Variable Text"),
         Family::Name("Segoe UI"),
+        Family::Name("DejaVu Sans"),
+        Family::Name("Noto Sans"),
+        Family::Name("Liberation Sans"),
         Family::SansSerif,
     ];
     let id = database.query(&Query {

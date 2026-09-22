@@ -1,0 +1,44 @@
+name: Linux build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: Ubuntu release tarball
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libdbus-1-dev \
+            libfontconfig1-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libegl1-mesa-dev
+
+      - name: Build and pack
+        run: |
+          chmod +x build_linux.sh packaging/linux/install.sh packaging/linux/uninstall.sh
+          ./build_linux.sh
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: ECGStudio-linux
+          path: dist/ECGStudio-linux-*.tar.gz
+          if-no-files-found: error

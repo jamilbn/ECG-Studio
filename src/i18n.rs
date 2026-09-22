@@ -13,17 +13,20 @@ pub enum Language {
 
 impl Language {
     fn from_locale(locale: &str) -> Option<Self> {
-        let normalized = locale.trim().replace('_', "-").to_ascii_lowercase();
+        let mut normalized = locale.trim().replace('_', "-").to_ascii_lowercase();
+        if let Some(index) = normalized.find(['.', '@']) {
+            normalized.truncate(index);
+        }
         if normalized.is_empty() {
             return None;
         }
 
         let language = normalized.split('-').next().unwrap_or_default();
         match language {
-            "pt" if normalized == "pt-pt" => Some(Self::PtPt),
+            "pt" if normalized == "pt-pt" || normalized.starts_with("pt-pt-") => Some(Self::PtPt),
             "pt" => Some(Self::PtBr),
             "en" => Some(Self::En),
-            "es" if normalized == "es-es" => Some(Self::EsEs),
+            "es" if normalized == "es-es" || normalized.starts_with("es-es-") => Some(Self::EsEs),
             "es" => Some(Self::EsLatam),
             "fr" => Some(Self::Fr),
             "it" => Some(Self::It),
@@ -1194,6 +1197,19 @@ mod tests {
         assert_eq!(Language::from_locale("pt-PT"), Some(Language::PtPt));
         assert_eq!(Language::from_locale("pt-BR"), Some(Language::PtBr));
         assert_eq!(Language::from_locale("pt-AO"), Some(Language::PtBr));
+    }
+
+    #[test]
+    fn maps_linux_locale_strings() {
+        assert_eq!(Language::from_locale("pt_PT.UTF-8"), Some(Language::PtPt));
+        assert_eq!(Language::from_locale("pt_BR.utf8"), Some(Language::PtBr));
+        assert_eq!(Language::from_locale("es_ES.UTF-8"), Some(Language::EsEs));
+        assert_eq!(
+            Language::from_locale("es_MX.UTF-8"),
+            Some(Language::EsLatam)
+        );
+        assert_eq!(Language::from_locale("en_US.UTF-8"), Some(Language::En));
+        assert_eq!(Language::from_locale("C"), None);
     }
 
     #[test]

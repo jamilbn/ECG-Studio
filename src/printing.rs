@@ -1,5 +1,8 @@
+#[cfg(any(target_os = "linux", test))]
+use std::fmt::Write;
+
 use crate::preview::RenderedPage;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux", test))]
 use crate::preview::{Color, DrawCommand, LogoBitmap, Point, Rect};
 
 pub fn print_page(page: &RenderedPage) -> Result<(), String> {
@@ -656,22 +659,453 @@ fn free_print_dialog_handles(
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn print_page_platform(page: &RenderedPage) -> Result<(), String> {
     if page.width <= 0.0 || page.height <= 0.0 || page.commands.is_empty() {
-        return Err("Nao ha ECG vetorial para imprimir.".to_owned());
+        return Err("Não há ECG vetorial para imprimir.".to_owned());
+    }
+
+    let pdf = page_to_pdf(page)?;
+    let path = temporary_print_pdf_path();
+    std::fs::write(&path, &pdf)
+        .map_err(|error| format!("Falha preparando a página de impressão: {error}"))?;
+
+    match print_pdf_with_dialog(&path, page) {
+        Ok(()) => Ok(()),
+        Err(error) if is_print_cancelled(&error) => Err("Impressão cancelada.".to_owned()),
+        Err(dialog_error) => print_via_html_fallback(page).map_err(|fallback_error| {
+            format!("Falha ao abrir o diálogo de impressão: {dialog_error}. {fallback_error}")
+        }),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn print_page_platform(page: &RenderedPage) -> Result<(), String> {
+    print_via_html_fallback(page)
+}
+
+#[cfg(not(windows))]
+fn print_via_html_fallback(page: &RenderedPage) -> Result<(), String> {
+    if page.width <= 0.0 || page.height <= 0.0 || page.commands.is_empty() {
+        return Err("Não há ECG vetorial para imprimir.".to_owned());
     }
 
     let path = temporary_print_html_path();
     std::fs::write(&path, print_dialog_html(page))
-        .map_err(|error| format!("Falha preparando a pagina de impressao: {error}"))?;
+        .map_err(|error| format!("Falha preparando a página de impressão: {error}"))?;
 
     open_print_dialog_html(&path).map_err(|error| {
         format!(
-            "Falha ao abrir o dialogo de impressao: {error}. Arquivo preparado em {}.",
+            "Falha ao abrir o diálogo de impressão: {error}. Arquivo preparado em {}.",
             path.display()
         )
     })
+}
+
+#[cfg(target_os = "linux")]
+fn print_pdf_with_dialog(path: &std::path::Path, page: &RenderedPage) -> Result<(), String> {
+    use std::fs::File;
+    use std::os::fd::AsFd;
+
+    use ashpd::desktop::print::{Orientation, PageSetup, PrintProxy, Settings};
+
+    let file = File::open(path).map_err(|error| {
+        format!(
+            "Falha lendo a página de impressão {}: {error}",
+            path.display()
+        )
+    })?;
+    let orientation = if page.width >= page.height {
+        Orientation::Landscape
+    } else {
+        Orientation::Portrait
+    };
+    let settings = Settings::default()
+        .orientation(orientation)
+        .paper_format("iso_a4_210x297mm")
+        .n_copies("1");
+    let page_setup = if page.width >= page.height {
+        PageSetup::default()
+            .orientation(orientation)
+            .width(297.0)
+            .height(210.0)
+    } else {
+        PageSetup::default()
+            .orientation(orientation)
+            .width(210.0)
+            .height(297.0)
+    };
+
+    pollster::block_on(async {
+        let proxy = PrintProxy::new()
+            .await
+            .map_err(|error| format!("portal de impressão indisponível ({error})"))?;
+        let prepared = proxy
+            .prepare_print(None, "ECG Studio", settings, page_setup, None, true)
+            .await
+            .map_err(format_portal_error)?
+            .response()
+            .map_err(format_portal_error)?;
+        proxy
+            .print(
+                None,
+                "ECG Studio",
+                &file.as_fd(),
+                Some(prepared.token),
+                true,
+            )
+            .await
+            .map_err(format_portal_error)?;
+        Ok(())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn format_portal_error(error: ashpd::Error) -> String {
+    let text = error.to_string();
+    if is_print_cancelled(&text) {
+        "Impressão cancelada.".to_owned()
+    } else {
+        text
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_print_cancelled(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("cancel")
+}
+
+#[cfg(target_os = "linux")]
+fn temporary_print_pdf_path() -> std::path::PathBuf {
+    temporary_print_path("pdf")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn page_to_pdf(page: &RenderedPage) -> Result<Vec<u8>, String> {
+    use std::io::Write;
+
+    let landscape = page.width >= page.height;
+    let (media_w, media_h) = if landscape {
+        (842.0_f64, 595.0_f64)
+    } else {
+        (595.0_f64, 842.0_f64)
+    };
+    if page.width <= 0.0 || page.height <= 0.0 {
+        return Err("Página de ECG inválida para PDF.".to_owned());
+    }
+
+    let mut images = Vec::new();
+    let mut content = String::new();
+    content.push_str("q\n");
+    let _ = write!(
+        content,
+        "{:.6} 0 0 {:.6} 0 {:.6} cm\n",
+        media_w / page.width,
+        -(media_h / page.height),
+        media_h
+    );
+    content.push_str("1 J 1 j\n");
+
+    for command in &page.commands {
+        match command {
+            DrawCommand::FillRect { rect, color } => {
+                pdf_set_fill_color(&mut content, *color);
+                let _ = write!(
+                    content,
+                    "{:.3} {:.3} {:.3} {:.3} re f\n",
+                    rect.left,
+                    rect.top,
+                    rect.width(),
+                    rect.height()
+                );
+            }
+            DrawCommand::StrokeRect {
+                rect,
+                color,
+                stroke_width,
+            } => {
+                pdf_set_stroke(&mut content, *color, *stroke_width);
+                let _ = write!(
+                    content,
+                    "{:.3} {:.3} {:.3} {:.3} re S\n",
+                    rect.left,
+                    rect.top,
+                    rect.width(),
+                    rect.height()
+                );
+            }
+            DrawCommand::Line {
+                start,
+                end,
+                color,
+                stroke_width,
+            } => {
+                pdf_set_stroke(&mut content, *color, *stroke_width);
+                let _ = write!(
+                    content,
+                    "{:.3} {:.3} m {:.3} {:.3} l S\n",
+                    start.x, start.y, end.x, end.y
+                );
+            }
+            DrawCommand::Polyline {
+                points,
+                color,
+                stroke_width,
+            } => {
+                if points.len() < 2 {
+                    continue;
+                }
+                pdf_set_stroke(&mut content, *color, *stroke_width);
+                pdf_write_polyline(&mut content, points);
+            }
+            DrawCommand::Image { rect, bitmap, .. } => {
+                let Some(bitmap) = bitmap else {
+                    continue;
+                };
+                let Some(jpeg) = jpeg_from_rgba(bitmap) else {
+                    continue;
+                };
+                let name = format!("Im{}", images.len());
+                let _ = write!(
+                    content,
+                    "q {:.3} 0 0 {:.3} {:.3} {:.3} cm /{name} Do Q\n",
+                    rect.width(),
+                    -rect.height(),
+                    rect.left,
+                    rect.top + rect.height()
+                );
+                images.push((name, bitmap.width, bitmap.height, jpeg));
+            }
+            DrawCommand::Text {
+                x,
+                y,
+                text,
+                font_size,
+                color,
+                weight,
+            } => pdf_write_text(&mut content, *x, *y, text, *font_size, *color, *weight),
+        }
+    }
+    content.push_str("Q\n");
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+    let mut offsets = Vec::new();
+
+    let write_obj = |pdf: &mut Vec<u8>, offsets: &mut Vec<u32>, body: &[u8]| {
+        offsets.push(pdf.len() as u32);
+        let id = offsets.len();
+        let _ = write!(pdf, "{id} 0 obj\n");
+        pdf.extend_from_slice(body);
+        if !body.ends_with(b"\n") {
+            pdf.push(b'\n');
+        }
+        pdf.extend_from_slice(b"endobj\n");
+    };
+
+    write_obj(
+        &mut pdf,
+        &mut offsets,
+        b"<< /Type /Catalog /Pages 2 0 R >>\n",
+    );
+    write_obj(
+        &mut pdf,
+        &mut offsets,
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n",
+    );
+
+    let mut xobjects = String::new();
+    for (index, (name, _, _, _)) in images.iter().enumerate() {
+        let id = 7 + index;
+        let _ = write!(xobjects, "/{name} {id} 0 R ");
+    }
+    let resources =
+        format!("/Resources << /Font << /F1 5 0 R /F2 6 0 R >> /XObject << {xobjects}>> >>");
+    let page_obj = format!(
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {media_w:.2} {media_h:.2}] /Contents 4 0 R {resources} >>\n"
+    );
+    write_obj(&mut pdf, &mut offsets, page_obj.as_bytes());
+
+    let content_bytes = content.into_bytes();
+    let mut contents_obj = Vec::new();
+    let _ = write!(
+        contents_obj,
+        "<< /Length {} >>\nstream\n",
+        content_bytes.len()
+    );
+    contents_obj.extend_from_slice(&content_bytes);
+    contents_obj.extend_from_slice(b"endstream\n");
+    write_obj(&mut pdf, &mut offsets, &contents_obj);
+
+    write_obj(
+        &mut pdf,
+        &mut offsets,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\n",
+    );
+    write_obj(
+        &mut pdf,
+        &mut offsets,
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\n",
+    );
+
+    for (name, width, height, jpeg) in &images {
+        let _ = name;
+        let mut image_obj = Vec::new();
+        let _ = write!(
+            image_obj,
+            "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {} >>\nstream\n",
+            jpeg.len()
+        );
+        image_obj.extend_from_slice(jpeg);
+        image_obj.extend_from_slice(b"\nendstream\n");
+        write_obj(&mut pdf, &mut offsets, &image_obj);
+    }
+
+    let xref_offset = pdf.len();
+    let size = offsets.len() + 1;
+    let _ = write!(pdf, "xref\n0 {size}\n");
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in &offsets {
+        let _ = write!(pdf, "{offset:010} 00000 n \n");
+    }
+    let _ = write!(
+        pdf,
+        "trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n"
+    );
+
+    Ok(pdf)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn pdf_set_fill_color(content: &mut String, color: Color) {
+    let _ = write!(
+        content,
+        "{:.3} {:.3} {:.3} rg\n",
+        color.r as f64 / 255.0,
+        color.g as f64 / 255.0,
+        color.b as f64 / 255.0
+    );
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn pdf_set_stroke(content: &mut String, color: Color, stroke_width: f64) {
+    let _ = write!(
+        content,
+        "{:.3} {:.3} {:.3} RG {:.3} w\n",
+        color.r as f64 / 255.0,
+        color.g as f64 / 255.0,
+        color.b as f64 / 255.0,
+        stroke_width.max(0.2)
+    );
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn pdf_write_polyline(content: &mut String, points: &[Point]) {
+    let mut start = 0;
+    while start + 1 < points.len() {
+        let end = (start + 16_384).min(points.len());
+        let _ = write!(content, "{:.3} {:.3} m", points[start].x, points[start].y);
+        for point in &points[start + 1..end] {
+            let _ = write!(content, " {:.3} {:.3} l", point.x, point.y);
+        }
+        content.push_str(" S\n");
+        if end == points.len() {
+            break;
+        }
+        start = end - 1;
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn pdf_write_text(
+    content: &mut String,
+    x: f64,
+    y: f64,
+    text: &str,
+    font_size: f64,
+    color: Color,
+    weight: u16,
+) {
+    let encoded = pdf_encode_winansi(text);
+    if encoded.is_empty() {
+        return;
+    }
+    let font = if weight >= 600 { "F2" } else { "F1" };
+    let size = font_size.max(1.0);
+    pdf_set_fill_color(content, color);
+    let _ = write!(
+        content,
+        "BT /{font} {size:.3} Tf 1 0 0 -1 {x:.3} {baseline:.3} Tm (",
+        baseline = y + size * 0.8
+    );
+    content.push_str(&encoded);
+    content.push_str(") Tj ET\n");
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn pdf_encode_winansi(text: &str) -> String {
+    let mut encoded = String::new();
+    for ch in text.chars() {
+        let Some(byte) = winansi_byte(ch) else {
+            encoded.push('?');
+            continue;
+        };
+        match byte {
+            b'\\' => encoded.push_str("\\\\"),
+            b'(' => encoded.push_str("\\("),
+            b')' => encoded.push_str("\\)"),
+            32..=126 => encoded.push(byte as char),
+            _ => {
+                let _ = write!(encoded, "\\{byte:03o}");
+            }
+        }
+    }
+    encoded
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn winansi_byte(ch: char) -> Option<u8> {
+    let value = ch as u32;
+    if value <= 127 || (0xA0..=0xFF).contains(&value) {
+        Some(value as u8)
+    } else {
+        None
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn jpeg_from_rgba(bitmap: &LogoBitmap) -> Option<Vec<u8>> {
+    use image::ExtendedColorType;
+    use image::codecs::jpeg::JpegEncoder;
+
+    if bitmap.width == 0 || bitmap.height == 0 || bitmap.rgba.len() < 4 {
+        return None;
+    }
+
+    let mut rgb = Vec::with_capacity(bitmap.width as usize * bitmap.height as usize * 3);
+    for pixel in bitmap.rgba.chunks_exact(4) {
+        let alpha = pixel[3] as u16;
+        let blend = |channel: u8| ((channel as u16 * alpha + 255 * (255 - alpha)) / 255) as u8;
+        rgb.push(blend(pixel[0]));
+        rgb.push(blend(pixel[1]));
+        rgb.push(blend(pixel[2]));
+    }
+
+    let mut jpeg = Vec::new();
+    let mut encoder = JpegEncoder::new_with_quality(&mut jpeg, 90);
+    encoder
+        .encode(&rgb, bitmap.width, bitmap.height, ExtendedColorType::Rgb8)
+        .ok()?;
+    Some(jpeg)
+}
+
+#[cfg(not(windows))]
+fn temporary_print_path(extension: &str) -> std::path::PathBuf {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("ecg-studio-print-{millis}.{extension}"))
 }
 
 #[cfg(not(windows))]
@@ -712,11 +1146,7 @@ window.addEventListener("load", function () {{
 
 #[cfg(not(windows))]
 fn temporary_print_html_path() -> std::path::PathBuf {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
-    std::env::temp_dir().join(format!("ecg-studio-print-{millis}.html"))
+    temporary_print_path("html")
 }
 
 #[cfg(not(windows))]
@@ -750,5 +1180,126 @@ fn open_print_dialog_html(path: &std::path::Path) -> Result<(), String> {
     {
         let _ = path;
         Err("sistema operacional nao possui fluxo de impressao configurado".to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{jpeg_from_rgba, page_to_pdf, pdf_encode_winansi};
+    use crate::preview::{Color, DrawCommand, LogoBitmap, Point, Rect, RenderedPage};
+
+    fn sample_page(width: f64, height: f64) -> RenderedPage {
+        RenderedPage {
+            width,
+            height,
+            commands: vec![
+                DrawCommand::FillRect {
+                    rect: Rect {
+                        left: 0.0,
+                        top: 0.0,
+                        right: width,
+                        bottom: height,
+                    },
+                    color: Color {
+                        r: 255,
+                        g: 255,
+                        b: 255,
+                    },
+                },
+                DrawCommand::Line {
+                    start: Point { x: 10.0, y: 10.0 },
+                    end: Point { x: 120.0, y: 80.0 },
+                    color: Color { r: 0, g: 0, b: 0 },
+                    stroke_width: 1.2,
+                },
+                DrawCommand::Polyline {
+                    points: vec![
+                        Point { x: 20.0, y: 40.0 },
+                        Point { x: 40.0, y: 60.0 },
+                        Point { x: 80.0, y: 30.0 },
+                    ],
+                    color: Color { r: 0, g: 0, b: 0 },
+                    stroke_width: 0.8,
+                },
+                DrawCommand::Text {
+                    x: 24.0,
+                    y: 18.0,
+                    text: "ECG (I)".to_owned(),
+                    font_size: 12.0,
+                    color: Color {
+                        r: 17,
+                        g: 17,
+                        b: 17,
+                    },
+                    weight: 700,
+                },
+            ],
+        }
+    }
+
+    fn pdf_as_text(bytes: &[u8]) -> String {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+
+    #[test]
+    fn writes_landscape_a4_pdf() {
+        let pdf = page_to_pdf(&sample_page(1600.0, 1131.0)).expect("pdf");
+        let text = pdf_as_text(&pdf);
+        assert!(text.starts_with("%PDF-1.4"));
+        assert!(text.contains("/MediaBox [0 0 842.00 595.00]"));
+        assert!(text.contains("/BaseFont /Helvetica"));
+        assert!(text.contains("ECG \\(I\\)"));
+        assert!(text.contains("%%EOF"));
+    }
+
+    #[test]
+    fn writes_portrait_a4_pdf() {
+        let pdf = page_to_pdf(&sample_page(1131.0, 1600.0)).expect("pdf");
+        let text = pdf_as_text(&pdf);
+        assert!(text.contains("/MediaBox [0 0 595.00 842.00]"));
+    }
+
+    #[test]
+    fn embeds_logo_jpeg() {
+        let mut page = sample_page(1600.0, 1131.0);
+        page.commands.push(DrawCommand::Image {
+            rect: Rect {
+                left: 10.0,
+                top: 10.0,
+                right: 80.0,
+                bottom: 50.0,
+            },
+            data_uri: String::new(),
+            bitmap: Some(LogoBitmap {
+                width: 2,
+                height: 2,
+                rgba: vec![
+                    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+                ],
+            }),
+        });
+        let pdf = page_to_pdf(&page).expect("pdf");
+        let text = pdf_as_text(&pdf);
+        assert!(text.contains("/Subtype /Image"));
+        assert!(text.contains("/Im0 "));
+        assert!(
+            jpeg_from_rgba(
+                page.commands
+                    .iter()
+                    .find_map(|command| match command {
+                        DrawCommand::Image { bitmap, .. } => bitmap.as_ref(),
+                        _ => None,
+                    })
+                    .expect("bitmap")
+            )
+            .is_some()
+        );
+        assert!(pdf.windows(2).any(|window| window == b"\xff\xd8"));
+    }
+
+    #[test]
+    fn encodes_winansi_accents_and_parentheses() {
+        assert_eq!(pdf_encode_winansi("ECG (I)"), "ECG \\(I\\)");
+        assert_eq!(pdf_encode_winansi("São"), "S\\343o");
     }
 }

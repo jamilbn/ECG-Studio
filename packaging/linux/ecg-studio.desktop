@@ -1,9 +1,12 @@
 [Desktop Entry]
 Type=Application
 Name=ECG Studio
-Comment=Open and preview ECG files
+Comment=Open, preview, print and export ECG files
 Exec=ecg-studio %f
 Icon=ecg-studio
 Terminal=false
+StartupNotify=true
+StartupWMClass=ecg-studio
 Categories=Science;MedicalSoftware;
 MimeType=application/dicom;application/vnd.ecgstudio.ecg;application/xml;text/xml;
+Keywords=ECG;EKG;Cardiology;HL7;DICOM;

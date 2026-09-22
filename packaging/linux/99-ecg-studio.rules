@@ -1,0 +1,8 @@
+# ECG Studio live capture devices
+#
+# CONTEC ECG90A HID (VID 0483, PID 5750)
+KERNEL=="hidraw*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5750", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+
+# USB serial adapters used by CONTEC 8000G
+SUBSYSTEM=="tty", KERNEL=="ttyUSB*", MODE="0660", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", MODE="0660", GROUP="dialout", TAG+="uaccess"
