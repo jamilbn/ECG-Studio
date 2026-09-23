@@ -7,7 +7,7 @@ on:
 
 jobs:
   package:
-    name: Debian 13 release tarball
+    name: Debian 13 package
     runs-on: ubuntu-24.04
     container:
       image: debian:13
@@ -39,12 +39,14 @@ jobs:
 
       - name: Build and pack
         run: |
-          chmod +x build_linux.sh packaging/linux/install.sh packaging/linux/uninstall.sh
+          chmod +x build_linux.sh packaging/linux/build_deb.sh packaging/linux/install.sh packaging/linux/uninstall.sh
           ./build_linux.sh
 
-      - name: Upload tarball
+      - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
           name: ECGStudio-linux
-          path: dist/ECGStudio-linux-*.tar.gz
+          path: |
+            dist/ECGStudio-linux-*.tar.gz
+            dist/ecg-studio_*.deb
           if-no-files-found: error

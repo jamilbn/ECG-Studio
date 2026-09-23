@@ -32,5 +32,8 @@ chmod 755 "$DIST_DIR/install.sh" "$DIST_DIR/uninstall.sh"
 ARCHIVE="$ROOT_DIR/dist/ECGStudio-linux-$APP_VERSION.tar.gz"
 tar -C "$DIST_DIR" -czf "$ARCHIVE" .
 
+chmod +x "$ROOT_DIR/packaging/linux/build_deb.sh"
+"$ROOT_DIR/packaging/linux/build_deb.sh" "$DIST_DIR/ecg-studio"
+
 echo "$DIST_DIR"
 echo "$ARCHIVE"
