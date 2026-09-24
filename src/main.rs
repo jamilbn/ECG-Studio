@@ -142,6 +142,13 @@ enum BackgroundMessage {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // No Wayland o KWin ignora o PNG da janela e busca ecg-studio.desktop por este id.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        slint::BackendSelector::new().select()?;
+        slint::set_xdg_app_id("ecg-studio")?;
+    }
+
     let ui = AppWindow::new()?;
     let about_window = Rc::new(RefCell::new(None::<AboutWindow>));
     let settings_window = Rc::new(RefCell::new(None::<SettingsWindow>));
