@@ -370,26 +370,178 @@ export component AppWindow inherits Window {
     default-font-size: 13px;
     background: root.app-background;
 
-    function zoom-by-wheel(delta: length) {
-        if root.fit-preview {
-            root.zoom-scale = max(0.45, min(3.0, root.fitted-width / root.source-page-width));
-            root.fit-preview = false;
-        }
-        if delta > 0px {
-            root.zoom-scale = min(3.0, root.zoom-scale * 1.1);
-        } else if delta < 0px {
-            root.zoom-scale = max(0.45, root.zoom-scale / 1.1);
-        }
+    // The committed zoom is the page size sent to the renderer. zoom-live eases
+    // toward zoom-target and only scales that image, so the gesture stays on the
+    // GPU. The raster is refreshed once the wheel settles.
+    private property <float> zoom-target: 1.0;
+    private property <float> zoom-live: 1.0;
+    private property <float> zoom-committed: 1.0;
+    private property <bool> zoom-smoothing: false;
+    private property <bool> zoom-anchored: false;
+    private property <bool> zoom-commit-armed: false;
+    private property <bool> coasting: false;
+    private property <length> pan-x: 0px;
+    private property <length> pan-y: 0px;
+    private property <length> velocity-x: 0px;
+    private property <length> velocity-y: 0px;
+    private property <length> drag-origin-x: 0px;
+    private property <length> drag-origin-y: 0px;
+    private property <length> last-drag-x: 0px;
+    private property <length> last-drag-y: 0px;
+    private property <length> anchor-mouse-x: 0px;
+    private property <length> anchor-mouse-y: 0px;
+    private property <length> anchor-local-x: 0px;
+    private property <length> anchor-local-y: 0px;
+    animate zoom-live {
+        duration: root.zoom-smoothing ? 150ms : 0ms;
+        easing: ease-out;
     }
 
     private property <length> fitted-width: root.source-page-width <= 0px || root.source-page-height <= 0px
         ? 1px
-        : min(preview-scroll.visible-width, preview-scroll.visible-height * root.source-page-width / root.source-page-height);
+        : min(preview-frame.width, preview-frame.height * root.source-page-width / root.source-page-height);
     private property <length> fitted-height: root.source-page-width <= 0px || root.source-page-height <= 0px
         ? 1px
-        : min(preview-scroll.visible-height, preview-scroll.visible-width * root.source-page-height / root.source-page-width);
-    private property <length> page-width: root.fit-preview ? max(1px, root.fitted-width) : root.source-page-width * root.zoom-scale;
-    private property <length> page-height: root.fit-preview ? max(1px, root.fitted-height) : root.source-page-height * root.zoom-scale;
+        : min(preview-frame.height, preview-frame.width * root.source-page-height / root.source-page-width);
+    private property <length> page-width: root.fit-preview ? max(1px, root.fitted-width) : max(1px, root.source-page-width * root.zoom-committed);
+    private property <length> page-height: root.fit-preview ? max(1px, root.fitted-height) : max(1px, root.source-page-height * root.zoom-committed);
+    private property <float> preview-scale: root.fit-preview || root.zoom-committed == 0.0 ? 1.0 : root.zoom-live / root.zoom-committed;
+    private property <length> visual-page-width: max(1px, root.page-width * root.preview-scale);
+    private property <length> visual-page-height: max(1px, root.page-height * root.preview-scale);
+    private property <length> raw-page-x: root.zoom-anchored
+        ? root.anchor-mouse-x - root.anchor-local-x * root.preview-scale
+        : root.pan-x;
+    private property <length> raw-page-y: root.zoom-anchored
+        ? root.anchor-mouse-y - root.anchor-local-y * root.preview-scale
+        : root.pan-y;
+    private property <length> page-x: root.fit-preview
+        ? 0px
+        : root.clamp-offset(root.raw-page-x, preview-frame.width, root.visual-page-width);
+    private property <length> page-y: root.fit-preview
+        ? 0px
+        : root.clamp-offset(root.raw-page-y, preview-frame.height, root.visual-page-height);
+    private property <bool> h-overflow: !root.fit-preview && root.visual-page-width > preview-frame.width + 1px;
+    private property <bool> v-overflow: !root.fit-preview && root.visual-page-height > preview-frame.height + 1px;
+    private property <length> h-track: max(1px, preview-frame.width - (root.v-overflow ? 14px : 4px));
+    private property <length> v-track: max(1px, preview-frame.height - (root.h-overflow ? 14px : 4px));
+    private property <length> h-thumb-w: min(root.h-track, max(28px, root.h-track * preview-frame.width / root.visual-page-width));
+    private property <length> v-thumb-h: min(root.v-track, max(28px, root.v-track * preview-frame.height / root.visual-page-height));
+    private property <length> h-thumb-x: (root.h-track - root.h-thumb-w) * -root.page-x / max(1px, root.visual-page-width - preview-frame.width);
+    private property <length> v-thumb-y: (root.v-track - root.v-thumb-h) * -root.page-y / max(1px, root.visual-page-height - preview-frame.height);
+
+    function clamp-offset(value: length, visible: length, content: length) -> length {
+        min(0px, max(min(0px, visible - content), value));
+    }
+
+    function clamp-zoom(value: float) -> float {
+        max(0.45, min(3.0, value));
+    }
+
+    function pan-from-bar(horizontal: bool, pointer: length, track: length, thumb: length) {
+        root.coasting = false;
+        root.velocity-x = 0px;
+        root.velocity-y = 0px;
+        root.commit-zoom();
+        if horizontal {
+            root.pan-x = root.clamp-offset(
+                -(max(0px, min(track - thumb, pointer - thumb / 2)) / max(1px, track - thumb)) * max(0px, root.visual-page-width - preview-frame.width),
+                preview-frame.width,
+                root.visual-page-width
+            );
+        } else {
+            root.pan-y = root.clamp-offset(
+                -(max(0px, min(track - thumb, pointer - thumb / 2)) / max(1px, track - thumb)) * max(0px, root.visual-page-height - preview-frame.height),
+                preview-frame.height,
+                root.visual-page-height
+            );
+        }
+    }
+
+    function note-zoom-anchor(pointer-x: length, pointer-y: length) {
+        root.anchor-local-x = (pointer-x - root.page-x) / max(0.05, root.preview-scale);
+        root.anchor-local-y = (pointer-y - root.page-y) / max(0.05, root.preview-scale);
+        root.anchor-mouse-x = pointer-x;
+        root.anchor-mouse-y = pointer-y;
+        root.zoom-anchored = true;
+    }
+
+    function arm-zoom-commit() {
+        root.zoom-commit-armed = false;
+        root.zoom-commit-armed = true;
+    }
+
+    function commit-zoom() {
+        if root.fit-preview {
+            return;
+        }
+        root.pan-x = root.page-x;
+        root.pan-y = root.page-y;
+        root.zoom-anchored = false;
+        root.zoom-target = root.zoom-live;
+        root.zoom-live = root.zoom-target;
+        root.zoom-committed = root.zoom-live;
+        root.zoom-scale = root.zoom-live;
+        root.zoom-commit-armed = false;
+    }
+
+    function zoom-by-wheel(delta: length, pointer-x: length, pointer-y: length) {
+        if delta == 0px {
+            return;
+        }
+        root.coasting = false;
+        root.velocity-x = 0px;
+        root.velocity-y = 0px;
+        root.note-zoom-anchor(pointer-x, pointer-y);
+        if root.fit-preview {
+            root.zoom-smoothing = false;
+            root.zoom-committed = root.clamp-zoom(root.fitted-width / root.source-page-width);
+            root.zoom-live = root.zoom-committed;
+            root.zoom-target = root.zoom-committed;
+            root.zoom-smoothing = true;
+            root.fit-preview = false;
+        }
+        root.zoom-target = root.clamp-zoom(root.zoom-target * Math.pow(1.1, delta / 60px));
+        root.zoom-live = root.zoom-target;
+        root.zoom-scale = root.zoom-target;
+        root.arm-zoom-commit();
+    }
+
+    Timer {
+        interval: 180ms;
+        running: root.zoom-commit-armed;
+        triggered => {
+            root.zoom-commit-armed = false;
+            root.commit-zoom();
+        }
+    }
+
+    Timer {
+        interval: 16ms;
+        running: root.coasting;
+        triggered => {
+            if root.zoom-anchored || root.fit-preview {
+                root.coasting = false;
+                return;
+            }
+            if root.clamp-offset(root.pan-x + root.velocity-x, preview-frame.width, root.visual-page-width) == root.pan-x {
+                root.velocity-x = 0px;
+            } else {
+                root.pan-x = root.clamp-offset(root.pan-x + root.velocity-x, preview-frame.width, root.visual-page-width);
+            }
+            if root.clamp-offset(root.pan-y + root.velocity-y, preview-frame.height, root.visual-page-height) == root.pan-y {
+                root.velocity-y = 0px;
+            } else {
+                root.pan-y = root.clamp-offset(root.pan-y + root.velocity-y, preview-frame.height, root.visual-page-height);
+            }
+            root.velocity-x *= 0.86;
+            root.velocity-y *= 0.86;
+            if root.velocity-x > -0.4px && root.velocity-x < 0.4px && root.velocity-y > -0.4px && root.velocity-y < 0.4px {
+                root.velocity-x = 0px;
+                root.velocity-y = 0px;
+                root.coasting = false;
+            }
+        }
+    }
 
     HorizontalLayout {
         spacing: 0px;
@@ -705,30 +857,156 @@ export component AppWindow inherits Window {
                     border-color: root.border-color;
                     border-width: 1px;
                     clip: true;
-                    preview-scroll := ScrollView {
+                    // Flickable takes the wheel gesture on Wayland before a child can zoom.
+                    preview-frame := Rectangle {
                         width: parent.width;
                         height: parent.height;
-                        viewport-width: root.page-width;
-                        viewport-height: root.page-height;
-                        mouse-drag-pan-enabled: true;
 
                         Rectangle {
+                            x: root.page-x;
+                            y: root.page-y;
                             width: root.page-width;
                             height: root.page-height;
                             background: Palette.background;
+                            transform-origin: { x: 0px, y: 0px };
+                            transform-scale: root.preview-scale;
 
                             Image {
                                 source: root.preview-image;
                                 image-fit: contain;
+                                image-rendering: smooth;
                                 width: parent.width;
                                 height: parent.height;
                             }
-                            TouchArea {
+                        }
+
+                        pan-zoom := TouchArea {
+                            width: parent.width;
+                            height: parent.height;
+                            mouse-cursor: self.pressed ? grabbing : default;
+                            scroll-event(event) => {
+                                root.zoom-by-wheel(
+                                    abs(event.delta-y) >= abs(event.delta-x) ? event.delta-y : event.delta-x,
+                                    self.mouse-x,
+                                    self.mouse-y
+                                );
+                                accept
+                            }
+                            pointer-event(event) => {
+                                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                    root.coasting = false;
+                                    root.commit-zoom();
+                                    root.drag-origin-x = root.pan-x;
+                                    root.drag-origin-y = root.pan-y;
+                                    root.last-drag-x = self.mouse-x;
+                                    root.last-drag-y = self.mouse-y;
+                                    root.velocity-x = 0px;
+                                    root.velocity-y = 0px;
+                                }
+                                if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                                    if root.velocity-x < -0.8px || root.velocity-x > 0.8px || root.velocity-y < -0.8px || root.velocity-y > 0.8px {
+                                        root.velocity-x *= 0.45;
+                                        root.velocity-y *= 0.45;
+                                        root.coasting = true;
+                                    }
+                                }
+                            }
+                            moved => {
+                                if self.pressed && !root.fit-preview {
+                                    root.velocity-x = root.velocity-x * 0.45 + self.mouse-x - root.last-drag-x;
+                                    root.velocity-y = root.velocity-y * 0.45 + self.mouse-y - root.last-drag-y;
+                                    root.last-drag-x = self.mouse-x;
+                                    root.last-drag-y = self.mouse-y;
+                                    root.pan-x = root.clamp-offset(
+                                        root.drag-origin-x + self.mouse-x - self.pressed-x,
+                                        preview-frame.width,
+                                        root.visual-page-width
+                                    );
+                                    root.pan-y = root.clamp-offset(
+                                        root.drag-origin-y + self.mouse-y - self.pressed-y,
+                                        preview-frame.height,
+                                        root.visual-page-height
+                                    );
+                                }
+                            }
+                        }
+
+                        if root.h-overflow: Rectangle {
+                            x: 2px;
+                            y: parent.height - 10px;
+                            width: parent.width - (root.v-overflow ? 14px : 4px);
+                            height: 8px;
+
+                            Rectangle {
+                                x: root.h-thumb-x;
+                                width: root.h-thumb-w;
+                                height: parent.height;
+                                border-radius: 4px;
+                                background: root.secondary-text;
+                                opacity: h-bar.pressed || h-bar.has-hover ? 0.7 : 0.4;
+                                animate opacity { duration: 120ms; easing: ease-out; }
+                            }
+
+                            h-bar := TouchArea {
                                 width: parent.width;
                                 height: parent.height;
                                 scroll-event(event) => {
-                                    root.zoom-by-wheel(event.delta-y);
+                                    root.zoom-by-wheel(
+                                        abs(event.delta-y) >= abs(event.delta-x) ? event.delta-y : event.delta-x,
+                                        self.mouse-x,
+                                        preview-frame.height - parent.height + self.mouse-y
+                                    );
                                     accept
+                                }
+                                moved => {
+                                    if self.pressed {
+                                        root.pan-from-bar(true, self.mouse-x, self.width, root.h-thumb-w);
+                                    }
+                                }
+                                pointer-event(event) => {
+                                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                        root.pan-from-bar(true, self.mouse-x, self.width, root.h-thumb-w);
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.v-overflow: Rectangle {
+                            x: parent.width - 10px;
+                            y: 2px;
+                            width: 8px;
+                            height: parent.height - (root.h-overflow ? 14px : 4px);
+
+                            Rectangle {
+                                y: root.v-thumb-y;
+                                width: parent.width;
+                                height: root.v-thumb-h;
+                                border-radius: 4px;
+                                background: root.secondary-text;
+                                opacity: v-bar.pressed || v-bar.has-hover ? 0.7 : 0.4;
+                                animate opacity { duration: 120ms; easing: ease-out; }
+                            }
+
+                            v-bar := TouchArea {
+                                width: parent.width;
+                                height: parent.height;
+                                scroll-event(event) => {
+                                    root.zoom-by-wheel(
+                                        abs(event.delta-y) >= abs(event.delta-x) ? event.delta-y : event.delta-x,
+                                        preview-frame.width - parent.width + self.mouse-x,
+                                        self.mouse-y
+                                    );
+                                    accept
+                                }
+                                moved => {
+                                    if self.pressed {
+                                        root.pan-from-bar(false, self.mouse-y, self.height, root.v-thumb-h);
+                                    }
+                                }
+                                pointer-event(event) => {
+                                    if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                        root.pan-from-bar(false, self.mouse-y, self.height, root.v-thumb-h);
+                                    }
                                 }
                             }
                         }
