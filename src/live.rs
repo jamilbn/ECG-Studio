@@ -1929,7 +1929,7 @@ mod serial {
                 io::Error::last_os_error()
             ));
         }
-        if applied.c_ospeed != baud_rate as libc::speed_t {
+        if !baud_rate_matches(baud_rate, applied.c_ospeed as u32) {
             return Err(format!(
                 "A porta serial ficou em {} bps em vez de {baud_rate}.",
                 applied.c_ospeed
@@ -1998,6 +1998,14 @@ mod serial {
         Ok(())
     }
 
+    fn baud_rate_matches(requested: u32, actual: u32) -> bool {
+        if requested == 0 || actual == 0 {
+            return false;
+        }
+        // The CP2102 clock programs 230400 as 24000000/104 = 230769.
+        requested.abs_diff(actual).saturating_mul(100) <= requested.saturating_mul(2)
+    }
+
     fn baud_to_speed(baud_rate: u32) -> Result<libc::speed_t, String> {
         match baud_rate {
             230_400 => Ok(libc::B230400),
@@ -2011,6 +2019,12 @@ mod serial {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn accepts_the_cp2102_divisor_for_230400() {
+            assert!(baud_rate_matches(230_400, 230_769));
+            assert!(!baud_rate_matches(230_400, 9600));
+        }
 
         #[test]
         fn maps_contec_baud_rates() {
