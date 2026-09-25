@@ -390,6 +390,46 @@ pub fn render_document_svg_with_measurements(
     page.to_svg()
 }
 
+pub fn live_measurement_lines(document: &EcgDocument, options: &RenderOptions) -> Vec<String> {
+    if document.leads.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines =
+        analysis::analyze_ecg(document).report_lines_with_texts(options.texts.measurements);
+    if let Some(index) = lines.iter().position(|line| line.starts_with("QT:")) {
+        let qt_line = lines.remove(index);
+        lines.insert(0, qt_line);
+    }
+    lines
+}
+
+pub fn render_live_static_svg(document: &EcgDocument, options: &RenderOptions) -> String {
+    render_page(document, document, options, PageLayer::Static, &[]).to_svg()
+}
+
+pub fn render_live_signals_svg(
+    document: &EcgDocument,
+    options: &RenderOptions,
+    measurement_lines: &[String],
+) -> String {
+    render_page(
+        document,
+        document,
+        options,
+        PageLayer::Signals,
+        measurement_lines,
+    )
+    .to_svg()
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum PageLayer {
+    Full,
+    Static,
+    Signals,
+}
+
 pub fn image_from_svg(svg: &str) -> Image {
     Image::load_from_svg_data(svg.as_bytes()).unwrap_or_else(|_| fallback_image())
 }
@@ -399,13 +439,33 @@ pub fn render_document_page_with_measurements(
     measurements_document: &EcgDocument,
     options: RenderOptions,
 ) -> RenderedPage {
+    render_page(
+        document,
+        measurements_document,
+        &options,
+        PageLayer::Full,
+        &[],
+    )
+}
+
+fn render_page(
+    document: &EcgDocument,
+    measurements_document: &EcgDocument,
+    options: &RenderOptions,
+    layer: PageLayer,
+    measurement_lines: &[String],
+) -> RenderedPage {
     let (width, height, page_mm) = match options.orientation {
         PageOrientation::Landscape => (1600.0, 1131.0, (297.0, 210.0)),
         PageOrientation::Portrait => (1131.0, 1600.0, (210.0, 297.0)),
     };
 
     let palette = options.grid_theme.palette();
-    let mut canvas = VectorCanvas::new(width, height, palette.background);
+    let mut canvas = if layer == PageLayer::Signals {
+        VectorCanvas::transparent(width, height)
+    } else {
+        VectorCanvas::new(width, height, palette.background)
+    };
     let page = Rect {
         left: 0.0,
         top: 0.0,
@@ -425,8 +485,10 @@ pub fn render_document_page_with_measurements(
         scale,
         document,
         measurements_document,
-        &options,
+        options,
         palette,
+        layer,
+        measurement_lines,
     );
 
     let plot = Rect {
@@ -442,11 +504,12 @@ pub fn render_document_page_with_measurements(
             plot.inset(0.0, scale.mm_y(1.0)),
             scale,
             document,
-            &options,
+            options,
             palette,
+            layer,
         );
     } else {
-        draw_fallback_layout(&mut canvas, plot, scale, document, &options, palette);
+        draw_fallback_layout(&mut canvas, plot, scale, document, options, palette, layer);
     }
 
     canvas.into_page()
@@ -460,7 +523,14 @@ fn draw_header(
     measurements_document: &EcgDocument,
     options: &RenderOptions,
     palette: PagePalette,
+    layer: PageLayer,
+    measurement_lines: &[String],
 ) {
+    if layer == PageLayer::Signals {
+        draw_measurements_block(canvas, inner, scale, measurement_lines, palette);
+        return;
+    }
+
     let body_font_size = scale.mm_y(4.1).max(15.0);
     let date_y = inner.top + scale.mm_y(25.0);
     let mut text_left = inner.left;
@@ -560,15 +630,9 @@ fn draw_header(
         400,
     );
 
-    if !measurements_document.leads.is_empty() {
-        draw_measurements_block(
-            canvas,
-            inner,
-            scale,
-            measurements_document,
-            options,
-            palette,
-        );
+    if layer == PageLayer::Full && !measurements_document.leads.is_empty() {
+        let lines = live_measurement_lines(measurements_document, options);
+        draw_measurements_block(canvas, inner, scale, &lines, palette);
     }
 }
 
@@ -595,25 +659,20 @@ fn draw_measurements_block(
     canvas: &mut VectorCanvas,
     inner: Rect,
     scale: PageScale,
-    document: &EcgDocument,
-    options: &RenderOptions,
+    lines: &[String],
     palette: PagePalette,
 ) {
+    if lines.is_empty() {
+        return;
+    }
+
     let block_width = scale.mm_x(98.0).max(360.0).min(inner.width() * 0.48);
     let mut y = inner.top;
     let line_size = scale.mm_y(2.8).max(10.0);
     let max_chars = (block_width / (line_size * 0.48)).floor().max(24.0) as usize;
-
-    let mut lines =
-        analysis::analyze_ecg(document).report_lines_with_texts(options.texts.measurements);
-    if let Some(index) = lines.iter().position(|line| line.starts_with("QT:")) {
-        let qt_line = lines.remove(index);
-        lines.insert(0, qt_line);
-    }
-
     let x = (inner.right - block_width).max(inner.left);
-    for line in lines.into_iter().take(5) {
-        let line = truncate_text(&line, max_chars);
+    for line in lines.iter().take(5) {
+        let line = truncate_text(line, max_chars);
         canvas.draw_text(x, y, &line, line_size, palette.text, 400);
         y += scale.mm_y(4.2).max(13.0);
     }
@@ -643,6 +702,7 @@ fn draw_clinical_layout(
     document: &EcgDocument,
     options: &RenderOptions,
     palette: PagePalette,
+    layer: PageLayer,
 ) {
     let column_gap = scale.mm_x(1.0).max(2.0);
     let row_gap = scale.mm_y(1.0).max(2.0);
@@ -670,6 +730,7 @@ fn draw_clinical_layout(
             show_tail: document.kind.is_live(),
             options,
             palette,
+            layer,
         };
         for (column_index, lead_name) in row.iter().enumerate() {
             let left = lead_area.left + column_index as f64 * (column_width + column_gap);
@@ -712,8 +773,12 @@ fn draw_clinical_layout(
             show_tail: document.kind.is_live(),
             options,
             palette,
+            layer,
         },
     );
+    if layer == PageLayer::Signals {
+        return;
+    }
     let text_left = build_graph_rect(rhythm, scale, options.show_calibration).left;
     canvas.draw_text(
         text_left,
@@ -732,16 +797,19 @@ fn draw_fallback_layout(
     document: &EcgDocument,
     options: &RenderOptions,
     palette: PagePalette,
+    layer: PageLayer,
 ) {
     if document.leads.is_empty() {
-        canvas.draw_text(
-            plot.left + scale.mm_x(8.0),
-            plot.top + scale.mm_y(10.0),
-            options.texts.no_leads,
-            scale.mm_y(4.7).max(18.0),
-            palette.text,
-            400,
-        );
+        if layer != PageLayer::Signals {
+            canvas.draw_text(
+                plot.left + scale.mm_x(8.0),
+                plot.top + scale.mm_y(10.0),
+                options.texts.no_leads,
+                scale.mm_y(4.7).max(18.0),
+                palette.text,
+                400,
+            );
+        }
         return;
     }
 
@@ -775,6 +843,7 @@ fn draw_fallback_layout(
         show_tail: document.kind.is_live(),
         options,
         palette,
+        layer,
     };
 
     for (index, lead) in document.leads.iter().enumerate() {
@@ -799,6 +868,9 @@ fn draw_fallback_layout(
         draw_lead_panel(canvas, panel, Some(lead), &lead.name, &context);
     }
 
+    if layer == PageLayer::Signals {
+        return;
+    }
     canvas.draw_text(
         plot.left + scale.mm_x(1.5),
         footer.top + scale.mm_y(1.0),
@@ -827,6 +899,7 @@ struct LeadRenderContext<'a> {
     show_tail: bool,
     options: &'a RenderOptions,
     palette: PagePalette,
+    layer: PageLayer,
 }
 
 fn draw_lead_panel(
@@ -836,19 +909,25 @@ fn draw_lead_panel(
     label: &str,
     context: &LeadRenderContext<'_>,
 ) {
-    draw_grid(canvas, panel, context.scale, context.palette);
-    canvas.stroke_rect(panel, context.palette.panel_frame, FRAME_STROKE);
-    canvas.draw_text(
-        panel.left + context.scale.mm_x(1.5),
-        panel.top + context.scale.mm_y(1.2),
-        label,
-        context.scale.mm_y(3.4).max(12.0),
-        context.palette.text,
-        700,
-    );
+    if context.layer != PageLayer::Signals {
+        draw_grid(canvas, panel, context.scale, context.palette);
+        canvas.stroke_rect(panel, context.palette.panel_frame, FRAME_STROKE);
+        canvas.draw_text(
+            panel.left + context.scale.mm_x(1.5),
+            panel.top + context.scale.mm_y(1.2),
+            label,
+            context.scale.mm_y(3.4).max(12.0),
+            context.palette.text,
+            700,
+        );
 
-    if context.options.show_calibration {
-        draw_calibration_pulse(canvas, panel, context.scale, context.palette);
+        if context.options.show_calibration {
+            draw_calibration_pulse(canvas, panel, context.scale, context.palette);
+        }
+    }
+
+    if context.layer == PageLayer::Static {
+        return;
     }
 
     let Some(lead) = lead else {
@@ -1034,11 +1113,7 @@ struct VectorCanvas {
 
 impl VectorCanvas {
     fn new(width: f64, height: f64, background: Color) -> Self {
-        let mut canvas = Self {
-            width,
-            height,
-            commands: Vec::new(),
-        };
+        let mut canvas = Self::transparent(width, height);
         canvas.fill_rect(
             Rect {
                 left: 0.0,
@@ -1049,6 +1124,14 @@ impl VectorCanvas {
             background,
         );
         canvas
+    }
+
+    fn transparent(width: f64, height: f64) -> Self {
+        Self {
+            width,
+            height,
+            commands: Vec::new(),
+        }
     }
 
     fn into_page(self) -> RenderedPage {
@@ -1646,6 +1729,37 @@ mod tests {
             (points[0].y - points[1].y).abs(),
             (page.height / 210.0) * 10.0,
         );
+    }
+
+    #[test]
+    fn live_layers_keep_the_grid_off_the_moving_trace() {
+        let mut document = EcgDocument::new(DocumentKind::ContecLive, Default::default());
+        document.sample_interval_seconds = 0.002;
+        for name in [
+            "I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6",
+        ] {
+            document
+                .leads
+                .push(LeadData::new(name, vec![0.0, 200.0, -200.0, 0.0]));
+        }
+        let options = RenderOptions {
+            orientation: PageOrientation::Landscape,
+            show_calibration: true,
+            grid_theme: GridTheme::LightSalmon,
+            clinic_logo: None,
+            texts: test_page_texts(),
+        };
+
+        let static_page = render_live_static_svg(&document, &options);
+        let signal_page = render_live_signals_svg(&document, &options, &[]);
+
+        assert!(static_page.contains("#f6d8cc"));
+        assert!(static_page.contains("<rect"));
+        assert!(!signal_page.contains("#f6d8cc"));
+        assert!(!signal_page.contains("<rect"));
+        assert!(signal_page.contains("<polyline"));
+        Image::load_from_svg_data(static_page.as_bytes()).expect("static page should load");
+        Image::load_from_svg_data(signal_page.as_bytes()).expect("signal page should load");
     }
 
     #[test]

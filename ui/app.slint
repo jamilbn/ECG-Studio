@@ -261,6 +261,8 @@ export component AppWindow inherits Window {
     in property <string> file-name: "Nenhum arquivo carregado";
     in property <string> status-text: "Abra um ECG para visualizar a página.";
     in property <image> preview-image;
+    in property <image> trace-image;
+    in property <bool> trace-visible: false;
     in property <string> text-live-capture: "Captura ao vivo";
     in property <string> text-device: "Aparelho";
     in property <string> text-recording: "Gravando";
@@ -873,6 +875,14 @@ export component AppWindow inherits Window {
 
                             Image {
                                 source: root.preview-image;
+                                image-fit: contain;
+                                image-rendering: smooth;
+                                width: parent.width;
+                                height: parent.height;
+                            }
+
+                            if root.trace-visible: Image {
+                                source: root.trace-image;
                                 image-fit: contain;
                                 image-rendering: smooth;
                                 width: parent.width;

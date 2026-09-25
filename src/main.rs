@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use domain::{DocumentKind, EcgDocument, LeadData, NORMAL_LEAD_SAMPLE_SECONDS};
 use i18n::{Language, LanguageSelection, Texts};
@@ -35,6 +35,8 @@ slint::include_modules!();
 
 const PREVIEW_REFRESH_DELAY: Duration = Duration::from_millis(150);
 const LIVE_DISPLAY_SECONDS: f64 = 30.0;
+const LIVE_PREVIEW_SECONDS: f64 = 13.0;
+const LIVE_MEASUREMENT_INTERVAL: Duration = Duration::from_secs(1);
 const ABOUT_WINDOW_WIDTH: u32 = 340;
 const ABOUT_WINDOW_HEIGHT: u32 = 220;
 const SETTINGS_WINDOW_WIDTH: u32 = 440;
@@ -97,6 +99,9 @@ struct AppState {
     preview_request_id: u64,
     preview_in_flight: bool,
     preview_refresh_pending: bool,
+    live_static_key: String,
+    live_measurement_lines: Vec<String>,
+    live_measurements_at: Option<Instant>,
     language_selection: LanguageSelection,
     language: Language,
 }
@@ -120,10 +125,34 @@ impl AppState {
             preview_request_id: 0,
             preview_in_flight: false,
             preview_refresh_pending: false,
+            live_static_key: String::new(),
+            live_measurement_lines: Vec::new(),
+            live_measurements_at: None,
             language_selection,
             language,
         }
     }
+}
+
+enum RenderedPreview {
+    Page {
+        svg: String,
+        status: String,
+    },
+    Live {
+        static_svg: Option<String>,
+        static_key: String,
+        signals_svg: String,
+        measurement_lines: Option<Vec<String>>,
+        status: String,
+    },
+}
+
+struct LivePreviewPlan {
+    reuse_static: bool,
+    static_key: String,
+    refresh_measurements: bool,
+    cached_measurement_lines: Vec<String>,
 }
 
 enum BackgroundMessage {
@@ -133,8 +162,7 @@ enum BackgroundMessage {
     },
     PreviewRendered {
         request_id: u64,
-        svg: String,
-        status: String,
+        preview: RenderedPreview,
     },
     ExportFinished {
         status: String,
@@ -771,10 +799,9 @@ fn install_background_message_drain(
                 }
                 BackgroundMessage::PreviewRendered {
                     request_id,
-                    svg,
-                    status,
+                    preview,
                 } => {
-                    finish_preview_refresh(&ui, &state, request_id, svg, status);
+                    finish_preview_refresh(&ui, &state, request_id, preview);
                 }
                 BackgroundMessage::ExportFinished { status } => {
                     ui.set_status_text(status.into());
@@ -1119,6 +1146,9 @@ fn invalidate_preview_jobs(state: &mut AppState) {
     state.preview_request_id = state.preview_request_id.wrapping_add(1);
     state.preview_in_flight = false;
     state.preview_refresh_pending = false;
+    state.live_static_key.clear();
+    state.live_measurement_lines.clear();
+    state.live_measurements_at = None;
 }
 
 fn refresh_preview(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
@@ -1131,6 +1161,7 @@ fn refresh_preview(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
             let orientation = PageOrientation::from_key(&orientation_key_from_ui(ui));
             let grid_theme = GridTheme::from_key(&grid_theme_key_from_ui(ui));
             ui.set_preview_image(preview::render_empty(orientation, grid_theme, texts.page));
+            ui.set_trace_visible(false);
             ui.set_status_text(texts.ui.empty_status.into());
             return;
         };
@@ -1161,17 +1192,21 @@ fn refresh_preview(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
     let filter = FilterMode::from_key(&filter_key_from_ui(ui));
     let selected_leads = selected_leads_from_ui(ui);
     let options = current_render_options(ui, clinic_logo, texts);
+    let live_plan = live_preview_plan(state, &document, &selected_leads, &options);
     let texts = *texts;
 
     thread::spawn(move || {
-        let filtered = processing::apply_filter(&document, filter);
-        let displayed = document_with_selected_leads(&filtered, &selected_leads);
-        let status = status_for_document(&displayed, &texts);
-        let svg = preview::render_document_svg_with_measurements(&displayed, &document, options);
+        let preview = render_preview_image(
+            &document,
+            filter,
+            &selected_leads,
+            &options,
+            &texts,
+            live_plan,
+        );
         let _ = background_tx.send(BackgroundMessage::PreviewRendered {
             request_id,
-            svg,
-            status,
+            preview,
         });
     });
 }
@@ -1180,8 +1215,7 @@ fn finish_preview_refresh(
     ui: &AppWindow,
     state: &Rc<RefCell<AppState>>,
     request_id: u64,
-    svg: String,
-    status: String,
+    preview: RenderedPreview,
 ) {
     let should_refresh_again = {
         let mut state = state.borrow_mut();
@@ -1194,8 +1228,7 @@ fn finish_preview_refresh(
         should_refresh_again
     };
 
-    ui.set_preview_image(preview::image_from_svg(&svg));
-    ui.set_status_text(status.into());
+    present_preview(ui, state, preview);
 
     if should_refresh_again {
         refresh_preview(ui, state);
@@ -1212,22 +1245,187 @@ fn refresh_preview_sync(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
         let orientation = PageOrientation::from_key(&orientation_key_from_ui(ui));
         let grid_theme = GridTheme::from_key(&grid_theme_key_from_ui(ui));
         ui.set_preview_image(preview::render_empty(orientation, grid_theme, texts.page));
+        ui.set_trace_visible(false);
         ui.set_status_text(texts.ui.empty_status.into());
         return;
     };
 
     sync_document_from_ui(ui, &mut document);
     let filter = FilterMode::from_key(&filter_key_from_ui(ui));
-    let filtered = processing::apply_filter(&document, filter);
     let selected_leads = selected_leads_from_ui(ui);
-    let displayed = document_with_selected_leads(&filtered, &selected_leads);
-    let image = preview::render_document_with_measurements(
-        &displayed,
+    let options = current_render_options(ui, clinic_logo, texts);
+    let live_plan = live_preview_plan(state, &document, &selected_leads, &options);
+    let preview = render_preview_image(
         &document,
-        current_render_options(ui, clinic_logo, texts),
+        filter,
+        &selected_leads,
+        &options,
+        texts,
+        live_plan,
     );
-    ui.set_preview_image(image);
-    ui.set_status_text(status_for_document(&displayed, texts).into());
+    present_preview(ui, state, preview);
+}
+
+fn live_preview_plan(
+    state: &Rc<RefCell<AppState>>,
+    document: &EcgDocument,
+    selected_leads: &[&str],
+    options: &preview::RenderOptions,
+) -> Option<LivePreviewPlan> {
+    if !document.kind.is_live() {
+        return None;
+    }
+
+    let static_key = live_static_key(document, selected_leads, options);
+    let state = state.borrow();
+    let reuse_static = state.live_static_key == static_key;
+    let refresh_measurements = !reuse_static
+        || state
+            .live_measurements_at
+            .is_none_or(|instant| instant.elapsed() >= LIVE_MEASUREMENT_INTERVAL);
+    Some(LivePreviewPlan {
+        reuse_static,
+        static_key,
+        refresh_measurements,
+        cached_measurement_lines: state.live_measurement_lines.clone(),
+    })
+}
+
+fn live_static_key(
+    document: &EcgDocument,
+    selected_leads: &[&str],
+    options: &preview::RenderOptions,
+) -> String {
+    let orientation = match options.orientation {
+        PageOrientation::Portrait => "portrait",
+        PageOrientation::Landscape => "landscape",
+    };
+    let theme = match options.grid_theme {
+        GridTheme::TechnicalGray => "technical_gray",
+        GridTheme::LightSalmon => "light_salmon",
+    };
+    let logo = options
+        .clinic_logo
+        .as_ref()
+        .map(|logo| logo.display_name.as_str())
+        .unwrap_or("");
+    let mut key = format!(
+        "{orientation}|{theme}|{}|{logo}|{}|{}|{}|{}|{}|{}|{}",
+        options.show_calibration,
+        document.clinic_name,
+        document.physician_name,
+        document.patient_name,
+        document.patient_birth_date,
+        document.exam_date,
+        options.texts.patient,
+        options.texts.no_leads,
+    );
+    for lead in &document.leads {
+        key.push('|');
+        key.push_str(&lead.name);
+    }
+    for name in selected_leads {
+        key.push('|');
+        key.push_str(name);
+    }
+    key
+}
+
+fn render_preview_image(
+    document: &EcgDocument,
+    filter: FilterMode,
+    selected_leads: &[&str],
+    options: &preview::RenderOptions,
+    texts: &Texts,
+    live_plan: Option<LivePreviewPlan>,
+) -> RenderedPreview {
+    let Some(live_plan) = live_plan else {
+        let filtered = processing::apply_filter(document, filter);
+        let displayed = document_with_selected_leads(&filtered, selected_leads);
+        let status = status_for_document(&displayed, texts);
+        let svg =
+            preview::render_document_svg_with_measurements(&displayed, document, options.clone());
+        return RenderedPreview::Page { svg, status };
+    };
+
+    let filtered_source = preview_samples_for_live_filter(document);
+    let filtered = processing::apply_filter(&filtered_source, filter);
+    let displayed = document_with_selected_leads(&filtered, selected_leads);
+    let status = texts.status_for_document(
+        document.kind.label(),
+        displayed.leads.len(),
+        document.sample_rate_hz(),
+        document.duration_seconds(),
+    );
+    let measurement_lines = live_plan
+        .refresh_measurements
+        .then(|| preview::live_measurement_lines(document, options));
+    let draw_lines = measurement_lines
+        .as_deref()
+        .unwrap_or(live_plan.cached_measurement_lines.as_slice());
+    let signals_svg = preview::render_live_signals_svg(&displayed, options, draw_lines);
+    let static_svg = if live_plan.reuse_static {
+        None
+    } else {
+        Some(preview::render_live_static_svg(&displayed, options))
+    };
+    RenderedPreview::Live {
+        static_svg,
+        static_key: live_plan.static_key,
+        signals_svg,
+        measurement_lines,
+        status,
+    }
+}
+
+fn preview_samples_for_live_filter(document: &EcgDocument) -> EcgDocument {
+    let mut clipped = document.clone();
+    if document.sample_interval_seconds > 0.0 {
+        let max_samples =
+            (LIVE_PREVIEW_SECONDS / document.sample_interval_seconds).round() as usize;
+        trim_live_display_document(&mut clipped, max_samples);
+    }
+    clipped
+}
+
+fn present_preview(ui: &AppWindow, state: &Rc<RefCell<AppState>>, preview: RenderedPreview) {
+    match preview {
+        RenderedPreview::Page { svg, status } => {
+            {
+                let mut state = state.borrow_mut();
+                state.live_static_key.clear();
+                state.live_measurement_lines.clear();
+                state.live_measurements_at = None;
+            }
+            ui.set_preview_image(preview::image_from_svg(&svg));
+            ui.set_trace_visible(false);
+            ui.set_status_text(status.into());
+        }
+        RenderedPreview::Live {
+            static_svg,
+            static_key,
+            signals_svg,
+            measurement_lines,
+            status,
+        } => {
+            {
+                let mut state = state.borrow_mut();
+                if static_svg.is_some() {
+                    state.live_static_key = static_key;
+                }
+                if let Some(lines) = measurement_lines {
+                    state.live_measurement_lines = lines;
+                    state.live_measurements_at = Some(Instant::now());
+                }
+            }
+            if let Some(svg) = static_svg.as_deref() {
+                ui.set_preview_image(preview::image_from_svg(svg));
+            }
+            ui.set_trace_image(preview::image_from_svg(&signals_svg));
+            ui.set_trace_visible(true);
+            ui.set_status_text(status.into());
+        }
+    }
 }
 
 fn export_current_ecg(ui: &AppWindow, state: &Rc<RefCell<AppState>>) {
