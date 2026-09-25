@@ -23,6 +23,7 @@ fi
 
 DESKTOP_SRC="$SCRIPT_DIR/ecg-studio.desktop"
 MIME_SRC="$SCRIPT_DIR/ecg-studio-mime.xml"
+UDEV_EARLY_SRC="$SCRIPT_DIR/40-ecg-studio.rules"
 UDEV_SRC="$SCRIPT_DIR/99-ecg-studio.rules"
 
 if [[ "$(id -u)" -eq 0 ]]; then
@@ -59,15 +60,17 @@ echo "Desktop entry: $APP_DIR/ecg-studio.desktop"
 echo "File associations: $MIME_DIR/ecg-studio.xml"
 
 if [[ "$(id -u)" -eq 0 ]]; then
+  install -m 644 "$UDEV_EARLY_SRC" /etc/udev/rules.d/40-ecg-studio.rules
   install -m 644 "$UDEV_SRC" /etc/udev/rules.d/99-ecg-studio.rules
   if command -v udevadm >/dev/null 2>&1; then
     udevadm control --reload-rules >/dev/null 2>&1 || true
     udevadm trigger >/dev/null 2>&1 || true
   fi
-  echo "Installed live USB udev rules to /etc/udev/rules.d/99-ecg-studio.rules"
+  echo "Installed live USB udev rules to /etc/udev/rules.d/40-ecg-studio.rules and 99-ecg-studio.rules"
 else
   echo "Live USB capture needs device permissions."
   echo "Re-run with sudo to install udev rules, or copy:"
+  echo "  sudo install -m 644 \"$UDEV_EARLY_SRC\" /etc/udev/rules.d/40-ecg-studio.rules"
   echo "  sudo install -m 644 \"$UDEV_SRC\" /etc/udev/rules.d/99-ecg-studio.rules"
   echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
 fi

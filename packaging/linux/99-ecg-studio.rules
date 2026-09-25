@@ -1,7 +1,10 @@
-# ECG Studio live capture devices
-#
+# ECG Studio live capture devices.
+# Installed as 99- so this runs after brltty's generic CP210x rule.
+
 # CONTEC ECG90A HID (VID 0483, PID 5750)
 KERNEL=="hidraw*", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5750", MODE="0660", GROUP="plugdev", TAG+="uaccess"
 
-# CONTEC 8000G on a Silicon Labs CP210x bridge (VID 10C4, PID EA60)
-SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0660", GROUP="dialout", TAG+="uaccess"
+# CONTEC 8000G uses a Silicon Labs CP210x bridge (VID 10C4, PID EA60).
+# brltty treats that id as a Seika braille display and unbinds cp210x.
+SUBSYSTEM=="usb", ATTR{idVendor}=="10c4", ATTR{idProduct}=="ea60", ENV{SYSTEMD_WANTS}="", ENV{BRLTTY_BRAILLE_DRIVER}=""
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0660", GROUP="dialout", TAG+="uaccess"

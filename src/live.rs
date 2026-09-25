@@ -347,14 +347,15 @@ fn run_contec_8000g_capture(
     tx: &Sender<LiveMessage>,
 ) -> Result<(), String> {
     let mut port = serial::SerialPort::open_auto(230_400)?;
-    let _ = tx.send(LiveMessage::Status(
-        "Porta serial detectada e aberta a 230400 bps.".to_owned(),
-    ));
+    let _ = tx.send(LiveMessage::Status(format!(
+        "Porta serial {} aberta a 230400 bps.",
+        port.name()
+    )));
 
     port.write_all(&INIT_IDLE)?;
-    thread::sleep(Duration::from_millis(20));
+    thread::sleep(Duration::from_millis(40));
     port.write_all(&UNKNOWN_PREPARE)?;
-    thread::sleep(Duration::from_millis(5));
+    thread::sleep(Duration::from_millis(40));
     port.write_all(&START_STREAM)?;
     let _ = tx.send(LiveMessage::Status(
         "Aquisição CONTEC 8000G iniciada.".to_owned(),
@@ -1249,6 +1250,7 @@ mod serial {
 
     pub struct SerialPort {
         handle: HANDLE,
+        name: String,
     }
 
     impl SerialPort {
@@ -1285,7 +1287,14 @@ mod serial {
             unsafe {
                 let _ = PurgeComm(handle, PURGE_RXCLEAR | PURGE_TXCLEAR);
             }
-            Ok(Self { handle })
+            Ok(Self {
+                handle,
+                name: port_name.to_owned(),
+            })
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
         }
 
         pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, String> {
@@ -1616,6 +1625,8 @@ mod serial {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     use std::path::{Path, PathBuf};
+    use std::thread;
+    use std::time::Duration;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct SerialCandidate {
@@ -1625,6 +1636,7 @@ mod serial {
 
     pub struct SerialPort {
         file: File,
+        name: String,
     }
 
     impl SerialPort {
@@ -1646,7 +1658,14 @@ mod serial {
                     )
                 })?;
             configure_port(file.as_raw_fd(), baud_rate)?;
-            Ok(Self { file })
+            Ok(Self {
+                file,
+                name: path.display().to_string(),
+            })
+        }
+
+        pub fn name(&self) -> &str {
+            &self.name
         }
 
         pub fn read(&mut self, buffer: &mut [u8]) -> Result<usize, String> {
@@ -1665,9 +1684,47 @@ mod serial {
         }
 
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), String> {
-            self.file
-                .write_all(bytes)
-                .map_err(|error| format!("Falha escrevendo na porta serial: {error}"))
+            let mut offset = 0;
+            let mut stalls = 0;
+            while offset < bytes.len() {
+                match self.file.write(&bytes[offset..]) {
+                    Ok(0) => {
+                        stalls += 1;
+                        if stalls > 20 {
+                            return Err(
+                                "A porta serial nao aceitou o comando do CONTEC 8000G.".to_owned()
+                            );
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(count) => {
+                        offset += count;
+                        stalls = 0;
+                    }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            ErrorKind::WouldBlock | ErrorKind::Interrupted
+                        ) =>
+                    {
+                        stalls += 1;
+                        if stalls > 20 {
+                            return Err(format!("Falha escrevendo na porta serial: {error}"));
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => {
+                        return Err(format!("Falha escrevendo na porta serial: {error}"));
+                    }
+                }
+            }
+            if unsafe { libc::tcdrain(self.file.as_raw_fd()) } != 0 {
+                return Err(format!(
+                    "Falha aguardando a transmissao serial: {}",
+                    io::Error::last_os_error()
+                ));
+            }
+            Ok(())
         }
     }
 
@@ -1678,7 +1735,10 @@ mod serial {
 
     fn choose_serial_port(candidates: &[SerialCandidate]) -> Result<PathBuf, String> {
         if candidates.is_empty() {
-            return Err("Nenhuma porta serial foi encontrada para a captura ao vivo.".to_owned());
+            return Err(
+                "Nenhuma porta serial USB foi encontrada para o CONTEC 8000G. Conecte o aparelho e reconecte o cabo depois de instalar o pacote. Se o ttyUSB sumir ao plugar, o brltty tomou o adaptador CP210x."
+                    .to_owned(),
+            );
         }
 
         if candidates.len() == 1 {
@@ -1820,6 +1880,65 @@ mod serial {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn configure_port(fd: i32, baud_rate: u32) -> Result<(), String> {
+        baud_to_speed(baud_rate)?;
+        let mut termios = unsafe { std::mem::zeroed::<libc::termios2>() };
+        if unsafe { libc::ioctl(fd, libc::TCGETS2, &mut termios) } != 0 {
+            return Err(format!(
+                "Falha lendo a configuracao da porta serial: {}",
+                io::Error::last_os_error()
+            ));
+        }
+
+        termios.c_iflag &= !(libc::IGNBRK
+            | libc::BRKINT
+            | libc::PARMRK
+            | libc::ISTRIP
+            | libc::INLCR
+            | libc::IGNCR
+            | libc::ICRNL
+            | libc::IXON
+            | libc::IXOFF
+            | libc::IXANY);
+        termios.c_oflag &= !libc::OPOST;
+        termios.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN);
+        termios.c_cflag &= !(libc::CSIZE
+            | libc::PARENB
+            | libc::CSTOPB
+            | libc::CRTSCTS
+            | libc::CBAUD
+            | libc::CIBAUD);
+        termios.c_cflag |= libc::CS8 | libc::CLOCAL | libc::CREAD | libc::BOTHER;
+        termios.c_ispeed = baud_rate as libc::speed_t;
+        termios.c_ospeed = baud_rate as libc::speed_t;
+        termios.c_cc[libc::VMIN] = 0;
+        termios.c_cc[libc::VTIME] = 1;
+
+        if unsafe { libc::ioctl(fd, libc::TCSETS2, &termios) } != 0 {
+            return Err(format!(
+                "Falha configurando a porta serial em {baud_rate} bps: {}",
+                io::Error::last_os_error()
+            ));
+        }
+
+        let mut applied = unsafe { std::mem::zeroed::<libc::termios2>() };
+        if unsafe { libc::ioctl(fd, libc::TCGETS2, &mut applied) } != 0 {
+            return Err(format!(
+                "Falha confirmando a configuracao da porta serial: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        if applied.c_ospeed != baud_rate as libc::speed_t {
+            return Err(format!(
+                "A porta serial ficou em {} bps em vez de {baud_rate}.",
+                applied.c_ospeed
+            ));
+        }
+        finish_serial_open(fd)
+    }
+
+    #[cfg(not(target_os = "linux"))]
     fn configure_port(fd: i32, baud_rate: u32) -> Result<(), String> {
         let speed = baud_to_speed(baud_rate)?;
         let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
@@ -1866,8 +1985,15 @@ mod serial {
         if applied_speed != speed {
             return Err(format!("A porta serial nao aceitou {baud_rate} bps."));
         }
+        finish_serial_open(fd)
+    }
+
+    fn finish_serial_open(fd: i32) -> Result<(), String> {
         unsafe {
             libc::tcflush(fd, libc::TCIOFLUSH);
+            let mut lines = libc::TIOCM_DTR | libc::TIOCM_RTS;
+            libc::ioctl(fd, libc::TIOCMBIS, &mut lines);
+            libc::ioctl(fd, libc::TIOCEXCL);
         }
         Ok(())
     }

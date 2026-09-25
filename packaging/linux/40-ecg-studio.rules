@@ -1,0 +1,6 @@
+# ECG Studio live capture devices.
+# Installed as 40- so ModemManager sees the ignore flag before its own rules.
+
+# CONTEC 8000G on a Silicon Labs CP210x bridge (VID 10C4, PID EA60)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0660", GROUP="dialout", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="10c4", ATTR{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1"

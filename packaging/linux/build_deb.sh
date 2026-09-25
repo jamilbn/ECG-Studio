@@ -38,6 +38,8 @@ install -m 644 "$ROOT_DIR/packaging/linux/ecg-studio.desktop" \
   "$STAGE/usr/share/applications/ecg-studio.desktop"
 install -m 644 "$ROOT_DIR/packaging/linux/ecg-studio-mime.xml" \
   "$STAGE/usr/share/mime/packages/ecg-studio.xml"
+install -m 644 "$ROOT_DIR/packaging/linux/40-ecg-studio.rules" \
+  "$STAGE/etc/udev/rules.d/40-ecg-studio.rules"
 install -m 644 "$ROOT_DIR/packaging/linux/99-ecg-studio.rules" \
   "$STAGE/etc/udev/rules.d/99-ecg-studio.rules"
 
