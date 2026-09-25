@@ -1612,9 +1612,10 @@ mod serial {
 mod serial {
     use std::collections::HashSet;
     use std::fs::{self, File, OpenOptions};
-    use std::io::{ErrorKind, Read, Write};
+    use std::io::{self, ErrorKind, Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
     use std::path::{Path, PathBuf};
-    use std::process::Command;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct SerialCandidate {
@@ -1633,10 +1634,10 @@ mod serial {
         }
 
         fn open(path: &Path, baud_rate: u32) -> Result<Self, String> {
-            configure_port(path, baud_rate)?;
             let file = OpenOptions::new()
                 .read(true)
                 .write(true)
+                .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
                 .open(path)
                 .map_err(|error| {
                     format!(
@@ -1644,6 +1645,7 @@ mod serial {
                         path.display()
                     )
                 })?;
+            configure_port(file.as_raw_fd(), baud_rate)?;
             Ok(Self { file })
         }
 
@@ -1818,43 +1820,96 @@ mod serial {
         }
     }
 
-    fn configure_port(path: &Path, baud_rate: u32) -> Result<(), String> {
-        let path = path
-            .to_str()
-            .ok_or_else(|| "Caminho da porta serial contem caracteres invalidos.".to_owned())?;
-        let mut command = Command::new("stty");
+    fn configure_port(fd: i32, baud_rate: u32) -> Result<(), String> {
+        let speed = baud_to_speed(baud_rate)?;
+        let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+        if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
+            return Err(format!(
+                "Falha lendo a configuracao da porta serial: {}",
+                io::Error::last_os_error()
+            ));
+        }
 
-        #[cfg(target_os = "macos")]
-        command.arg("-f");
+        unsafe {
+            libc::cfmakeraw(&mut termios);
+        }
+        termios.c_cflag |= libc::CLOCAL | libc::CREAD;
+        termios.c_cflag &= !(libc::PARENB | libc::CSTOPB | libc::CSIZE | libc::CRTSCTS);
+        termios.c_cflag |= libc::CS8;
+        termios.c_iflag &= !(libc::IXON | libc::IXOFF | libc::IXANY);
+        termios.c_cc[libc::VMIN] = 0;
+        termios.c_cc[libc::VTIME] = 1;
 
-        #[cfg(not(target_os = "macos"))]
-        command.arg("-F");
+        if unsafe { libc::cfsetispeed(&mut termios, speed) } != 0
+            || unsafe { libc::cfsetospeed(&mut termios, speed) } != 0
+        {
+            return Err(format!(
+                "Falha definindo {baud_rate} bps: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) } != 0 {
+            return Err(format!(
+                "Falha configurando a porta serial em {baud_rate} bps: {}",
+                io::Error::last_os_error()
+            ));
+        }
 
-        let output = command
-            .arg(path)
-            .arg(baud_rate.to_string())
-            .arg("raw")
-            .arg("cs8")
-            .arg("-parenb")
-            .arg("-cstopb")
-            .arg("-ixon")
-            .arg("-ixoff")
-            .arg("-echo")
-            .arg("-icanon")
-            .arg("min")
-            .arg("0")
-            .arg("time")
-            .arg("1")
-            .output()
-            .map_err(|error| format!("Nao foi possivel executar stty: {error}"))?;
+        let mut applied = unsafe { std::mem::zeroed::<libc::termios>() };
+        if unsafe { libc::tcgetattr(fd, &mut applied) } != 0 {
+            return Err(format!(
+                "Falha confirmando a configuracao da porta serial: {}",
+                io::Error::last_os_error()
+            ));
+        }
+        let applied_speed = unsafe { libc::cfgetospeed(&applied) };
+        if applied_speed != speed {
+            return Err(format!("A porta serial nao aceitou {baud_rate} bps."));
+        }
+        unsafe {
+            libc::tcflush(fd, libc::TCIOFLUSH);
+        }
+        Ok(())
+    }
 
-        if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            Err(format!(
-                "Falha configurando a porta serial {path} em {baud_rate} bps com stty: {stderr}"
-            ))
+    fn baud_to_speed(baud_rate: u32) -> Result<libc::speed_t, String> {
+        match baud_rate {
+            230_400 => Ok(libc::B230400),
+            460_800 => Ok(libc::B460800),
+            _ => Err(format!(
+                "Velocidade serial {baud_rate} bps nao e suportada para o CONTEC 8000G."
+            )),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn maps_contec_baud_rates() {
+            assert_eq!(baud_to_speed(230_400).unwrap(), libc::B230400);
+            assert_eq!(baud_to_speed(460_800).unwrap(), libc::B460800);
+            assert!(baud_to_speed(9600).is_err());
+        }
+
+        #[test]
+        fn prefers_cp210x_by_id_over_another_usb_serial_port() {
+            let candidates = vec![
+                SerialCandidate {
+                    path: PathBuf::from("/dev/ttyUSB1"),
+                    label: "ttyUSB1".to_owned(),
+                },
+                SerialCandidate {
+                    path: PathBuf::from("/dev/serial/by-id/usb-Silicon_Labs_CP2102-if00-port0"),
+                    label: "usb-Silicon_Labs_CP2102-if00-port0".to_owned(),
+                },
+            ];
+
+            assert_eq!(
+                choose_serial_port(&candidates).unwrap(),
+                PathBuf::from("/dev/serial/by-id/usb-Silicon_Labs_CP2102-if00-port0")
+            );
         }
     }
 }

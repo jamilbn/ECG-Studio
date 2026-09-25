@@ -32,6 +32,9 @@ windows = { version = "0.62", features = [
     "Win32_UI_Controls_Dialogs",
 ] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.11.1", default-features = false, features = ["async-std"] }
 pollster = "0.4"
